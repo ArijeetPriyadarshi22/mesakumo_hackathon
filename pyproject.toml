@@ -1,0 +1,9 @@
+[project]
+name = "mesakumo-workspace"
+version = "0.1.0"
+description = "Local tender-to-proposal foundation"
+requires-python = ">=3.11"
+dependencies = ["pypdf==6.21.4"]
+
+[tool.unittest]
+start-directory = "tests"
