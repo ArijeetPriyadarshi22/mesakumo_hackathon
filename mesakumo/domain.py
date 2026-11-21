@@ -24,6 +24,16 @@ class SourcePassage:
     excerpt: str
     document_version: str = "synthetic-v1"
 
+PROPOSAL_SCOPE = 'Proposal requirement'
+ADMIN_SCOPE = 'General & administrative requirement'
+REQUIREMENT_SCOPES = (PROPOSAL_SCOPE, ADMIN_SCOPE)
+
+
+def proposal_requirements(rows):
+    """Keep proposal rows, including legacy rows with no scope."""
+    return [row for row in rows if row.get('scope', PROPOSAL_SCOPE) != ADMIN_SCOPE]
+
+
 @dataclass
 class Requirement:
     id: str
@@ -35,6 +45,7 @@ class Requirement:
     provenance: str = "Synthetic fixture"
     original_excerpts: list[str] = field(default_factory=list)
     obligation_level: str = 'Unspecified'
+    scope: str = PROPOSAL_SCOPE
 
 @dataclass
 class EvidenceMatch:
@@ -105,10 +116,12 @@ class Project:
     def fingerprint(self):
         content = self.to_dict()
         content.pop('decisions')
-        # Preserve fingerprints of legacy records that predate this optional field.
+        # Preserve fingerprints of legacy records that predate the default fields.
         for requirement in content['requirements']:
             if requirement.get('obligation_level') == 'Unspecified':
                 requirement.pop('obligation_level', None)
+            if requirement.get('scope') == PROPOSAL_SCOPE:
+                requirement.pop('scope', None)
         return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
     @property

@@ -2,7 +2,7 @@
 import json
 from uuid import uuid4
 from datetime import datetime, timezone
-from .domain import Requirement, ReviewDecision
+from .domain import PROPOSAL_SCOPE, REQUIREMENT_SCOPES, Requirement, ReviewDecision
 from .workflow import invalidate
 
 KINDS = ('deliverable', 'eligibility/evidence', 'submission instruction', 'deadline', 'other')
@@ -34,8 +34,9 @@ def validate_candidates(raw, passages):
     result = []
     for index, row in enumerate(rows, 1):
         prefix = f'row {index}: '
-        if not isinstance(row, dict) or set(row) != {'statement', 'source_ids', 'kind', 'constraints'}:
-            reject(prefix + 'expected statement, source_ids, kind and constraints only')
+        required = {'statement', 'source_ids', 'kind', 'constraints'}
+        if not isinstance(row, dict) or set(row) - {'scope'} != required:
+            reject(prefix + 'expected statement, source_ids, kind, constraints and optional scope')
         if not isinstance(row['statement'], str) or not row['statement'].strip() or len(row['statement']) > 5000:
             reject(prefix + 'statement must be nonempty text of at most 5000 characters')
         ids = row['source_ids']
@@ -45,9 +46,12 @@ def validate_candidates(raw, passages):
             reject(prefix + 'kind must be one of ' + ', '.join(KINDS))
         if not isinstance(row['constraints'], list) or any(not isinstance(c, str) for c in row['constraints']):
             reject(prefix + 'constraints must be a list of strings')
+        scope = row.get('scope')
+        if scope not in REQUIREMENT_SCOPES:
+            scope = PROPOSAL_SCOPE
         result.append(Requirement('R-' + uuid4().hex, row['statement'], ids, row['kind'],
             constraints=row['constraints'], provenance='Requesty model candidate — semantically unverified',
-            original_excerpts=[sources[i].excerpt for i in ids]))
+            original_excerpts=[sources[i].excerpt for i in ids], scope=scope))
     return result
 
 def extract_candidates(project, model):

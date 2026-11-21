@@ -2,6 +2,7 @@
 import streamlit as st
 from ..checklist import ChecklistReview, LEVELS
 from ..requirements import KINDS
+from ..domain import ADMIN_SCOPE, REQUIREMENT_SCOPES
 from ..agent import sources, ExtractionRuns
 
 
@@ -19,22 +20,35 @@ def review_view(store, project, rows):
     st.caption(f'{len(project.requirements)} requirements · Revision {project.revision} · '
                f'{gaps} unprocessed source batches · {unreadable} unreadable or unsupported files')
     import pandas as pd
-    columns = ['statement','category','obligation_level','exact_constraints','source_references','requirement_id']
+    columns = ['requirement','category','obligation_level','exact_constraints','source_references','requirement_id']
     query = st.text_input('Search requirements', key=f'filter:{project.id}').strip().casefold()
     visible = [r for r in project.requirements if not query or query in (r.text + ' ' + r.kind + ' ' + '; '.join(r.constraints)).casefold()]
+    visible.sort(key=lambda requirement: requirement.scope == ADMIN_SCOPE)
     st.caption(f'Showing {len(visible)} of {len(project.requirements)} requirements. Approval applies to the complete checklist.')
-    table = [{'statement':r.text, 'category':r.kind, 'obligation_level':r.obligation_level,
+    table = [{'requirement':r.text, 'category':r.kind, 'obligation_level':r.obligation_level,
         'exact_constraints':'; '.join(r.constraints),
         'source_references':'; '.join(f'{docs[choices[s].document_id].name} ({choices[s].location})' if s in choices else f'{s} (historical source)' for s in r.source_ids),
         'requirement_id':r.id} for r in visible]
-    st.caption('Statement = checkable requirement; Category = type; Obligation = reviewer classification; '
+    proposal = [row for row, item in zip(table, visible) if item.scope != ADMIN_SCOPE]
+    administrative = [row for row, item in zip(table, visible) if item.scope == ADMIN_SCOPE]
+    st.caption('Requirement = checkable obligation; Category = type; Obligation = reviewer classification; '
         'Exact constraints = dates, quantities and conditions; Sources = original document and location. '
         'Unspecified obligation levels still need review.')
-    st.dataframe(pd.DataFrame(table, columns=columns),hide_index=True,width='stretch',
-        column_order=['statement','category','source_references'],
-        column_config={'statement':st.column_config.TextColumn('Requirement',width='large'),
-            'category':st.column_config.TextColumn('Category',width='small'),
-            'source_references':st.column_config.TextColumn('Source document / location',width='large')})
+    def show_requirements(entries):
+        st.dataframe(pd.DataFrame(entries, columns=columns), hide_index=True, width='stretch',
+            column_order=['requirement_id','requirement','category','source_references'],
+            column_config={'requirement_id':st.column_config.TextColumn('Requirement ID'),
+                'requirement':st.column_config.TextColumn('Requirement',width='large'),
+                'category':st.column_config.TextColumn('Category',width='small'),
+                'source_references':st.column_config.TextColumn('Source document / location',width='large')})
+
+    st.markdown('**Proposal requirements**')
+    show_requirements(proposal)
+    with st.expander(f'General & administrative requirements ({len(administrative)})'):
+        if administrative:
+            show_requirements(administrative)
+        else:
+            st.caption('No administrative requirements to show.')
     if visible:
         records = {r.id:r for r in visible}
         selected_detail = st.selectbox('Read requirement and its sources',list(records),
@@ -44,7 +58,7 @@ def review_view(store, project, rows):
         with st.container(border=True):
             st.markdown('**Requirement**')
             st.write(item.text)
-            st.write(f'Category: {item.kind} · Obligation: {item.obligation_level}')
+            st.write(f'{item.scope} · Category: {item.kind} · Obligation: {item.obligation_level}')
             st.markdown('**Exact constraints**')
             st.write('; '.join(item.constraints) or 'None recorded')
             st.markdown('**Original sources**')
@@ -83,6 +97,8 @@ def review_view(store, project, rows):
             st.caption('Stable requirement ID: '+(item.id if item else 'Assigned on save'))
             text = st.text_area('Statement',value=item.text if item else '')
             category = st.selectbox('Category',KINDS,index=KINDS.index(item.kind) if item else 0)
+            scope = st.selectbox('Requirement scope', REQUIREMENT_SCOPES,
+                                 index=REQUIREMENT_SCOPES.index(item.scope) if item else 0)
             level = st.selectbox('Obligation level',LEVELS,index=LEVELS.index(item.obligation_level) if item else 0)
             constraints = st.text_area('Exact constraints (one per line)',value='\n'.join(item.constraints) if item else '')
             citations = st.multiselect('Source references',list(choices),default=[s for s in item.source_ids if s in choices] if item else [],
@@ -94,7 +110,7 @@ def review_view(store, project, rows):
         try:
             if save:
                 service.edit(project.id,expected,rows,item.id if item else '',text,category,level,citations,
-                    [c for c in constraints.splitlines() if c.strip()],reviewer,note)
+                    [c for c in constraints.splitlines() if c.strip()],reviewer,note,scope=scope)
                 st.session_state[key] = store.load(project.id).revision
                 st.rerun()
             if remove:

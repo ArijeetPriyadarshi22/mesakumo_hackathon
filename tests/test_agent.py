@@ -17,6 +17,9 @@ class Scripted:
 
 class CoverageModel:
     def __init__(self, fail_first=False): self.calls=0; self.fail_first=fail_first
+    def complete_overview(self, prompt, schema):
+        from mesakumo.models import ModelUnavailable
+        raise ModelUnavailable('Synthetic overview unavailable')
     def complete(self,prompt):
         from mesakumo.models import ModelUnavailable
         self.calls+=1

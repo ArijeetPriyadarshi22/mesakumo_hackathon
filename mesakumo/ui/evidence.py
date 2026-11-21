@@ -4,7 +4,7 @@ import streamlit as st
 from ..checklist import ChecklistReview
 from ..evidence import evidence_inventory, read_evidence
 from ..evidence_matching import GRADES, match_evidence
-from ..evidence_review import EvidenceReview, documents_current, review_table
+from ..evidence_review import EvidenceReview, coverage_issue, documents_current, review_table
 from ..models import configure_team_one, configured_model
 
 
@@ -25,10 +25,13 @@ def evidence_view(store, project, rows, directory, phase):
 def _evidence_view(service, draft, approved, project, directory, phase, inventory):
     revision = approved['revision']
     st.success(f"Received approved checklist revision {revision} · {project.name}")
-    st.caption(f"Project {approved['project_id']} · Phase {phase} · {len(approved['rows'])} approved requirements")
+    st.caption(f"Project {approved['project_id']} · Phase {phase} · {len(service.requirements)} approved proposal requirements")
     with st.expander('Approved requirements'):
         st.dataframe([{'Requirement ID': row['id'], 'Requirement': row['text']}
-                      for row in approved['rows']], hide_index=True, width='stretch')
+                      for row in service.requirements], hide_index=True, width='stretch')
+    if not service.requirements:
+        st.info('This checklist has no proposal requirements to match.')
+        return
 
     st.subheader('Evidence sources')
     scope = f'{project.id}:{phase}:{revision}:{service.store.path}'
@@ -62,10 +65,8 @@ def _evidence_view(service, draft, approved, project, directory, phase, inventor
         return configured_model()
 
     start = st.button('Start Evidence Matching', type='primary', disabled=not selected)
-    has_gaps = ('rows' in draft and
-                (any(row['status'] in ('Failed', 'Unprocessed') for row in draft['rows'])
-                 or any(doc['status'] != 'Read' for doc in draft['documents'])))
-    retry = has_gaps and st.button('Retry Evidence Matching')
+    has_gaps = 'rows' in draft and coverage_issue(draft)
+    retry = bool(has_gaps) and st.button('Retry Evidence Matching')
     if start or retry:
         progress = st.progress(0, text='Reading selected evidence files…')
 
@@ -73,7 +74,8 @@ def _evidence_view(service, draft, approved, project, directory, phase, inventor
             progress.progress(done / max(total, 1), text=f'Evidence lookups attempted: {done} of {total}')
 
         readings = read_evidence(directory, inventory, selected)
-        run = match_evidence(approved, phase, readings, get_model, on_progress=update_progress)
+        run = match_evidence(approved, phase, readings, get_model, on_progress=update_progress,
+                             confirm_all=bool(retry))
         service.save_run(draft['review_revision'], run, readings, directory)
         st.rerun()
 
@@ -120,11 +122,9 @@ def render_review(service, draft, directory, inventory, scope, fresh):
     st.subheader('Evidence review')
     st.dataframe(review_table(draft), hide_index=True, width='stretch')
     by_id = {row['requirement']['id']: row for row in draft['rows']}
-    unprocessed = sum(row['status'] not in ('Judged', 'Reviewed') for row in by_id.values())
-    if unprocessed:
-        st.warning(f'{unprocessed} requirements are incomplete. Review them or retry matching before approval.')
-    if any(doc['status'] != 'Read' for doc in draft['documents']):
-        st.warning('Some selected evidence could not be read. Review the coverage gaps before approval.')
+    issue = coverage_issue(draft)
+    if issue:
+        st.warning(issue)
     if not by_id:
         return
 
@@ -142,6 +142,10 @@ def render_review(service, draft, directory, inventory, scope, fresh):
             _source(draft['corpus'][pid], 'excerpt')
         if not row['citation_ids']:
             st.caption('No evidence citations on this row.')
+    scope = {'retrieval': 'Retrieved passages', 'full_readable_scan': 'All readable selected passages',
+             'current_action': 'Current action required', 'incomplete': 'Incomplete, findings are provisional'}
+    if row.get('search_scope') in scope:
+        st.caption(f"Search coverage: {scope[row['search_scope']]}")
     if row['current_action']:
         st.info(row['current_action'])
     with st.expander('Evidence tool trace'):
@@ -170,8 +174,8 @@ def render_review(service, draft, directory, inventory, scope, fresh):
     else:
         with st.form(f"approve_evidence:{scope}:{draft['review_revision']}"):
             reviewer = st.text_input('Evidence reviewer')
-            acknowledge = st.checkbox('I acknowledge No match items and evidence coverage gaps')
-            approve = st.form_submit_button('Approve and Save Evidence', disabled=bool(unprocessed) or not fresh)
+            acknowledge = st.checkbox('I acknowledge open No match items')
+            approve = st.form_submit_button('Approve and Save Evidence', disabled=bool(issue) or not fresh)
         if approve:
             service.approve(draft['review_revision'], directory, inventory, reviewer, acknowledge)
             st.rerun()
@@ -180,7 +184,11 @@ def render_review(service, draft, directory, inventory, scope, fresh):
 def proposal_handoff(store, project, rows, directory):
     try:
         checklist = ChecklistReview(store).current(project, rows)
-        approved = EvidenceReview(store, checklist).current(directory, evidence_inventory()) if checklist else None
+        service = EvidenceReview(store, checklist) if checklist else None
+        if service is not None and not service.requirements:
+            st.info('This checklist has no proposal requirements for drafting.')
+            return
+        approved = service.current(directory, evidence_inventory()) if service else None
         if approved:
             draft = approved['review']
             st.success(f"Received approved evidence review revision {draft['review_revision']} "

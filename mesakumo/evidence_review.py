@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from .evidence import resolve_evidence_path
 from .evidence_matching import GRADES, LexicalIndex
 from .documents import MAX_FILE_BYTES
+from .domain import proposal_requirements
 from .persistence import ConflictError
 
 COLUMNS = ['Requirement', 'Category', 'Tender sources', 'Evidence', 'Evidence sources', 'Evidence fit']
@@ -29,7 +30,7 @@ def review_table(draft):
         requirement = row['requirement']
         evidence = [draft['corpus'][pid] for pid in row['citation_ids']]
         references = lambda citations: '\n'.join(f"{c['filename']} · {c['location']}" for c in citations)
-        rows.append(dict(zip(COLUMNS, (
+        rows.append({'Requirement ID': requirement['id']} | dict(zip(COLUMNS, (
             requirement['text'], requirement['kind'], references(row['tender_sources']),
             '\n\n'.join(filter(None, [row['notes'], *(c['excerpt'] for c in evidence)])),
             references(evidence), row['fit'],
@@ -46,7 +47,6 @@ def evidence_csv(draft):
     writer.writeheader()
     for values, row in zip(review_table(draft), draft['rows']):
         writer.writerow(values | {
-            'Requirement ID': row['requirement']['id'],
             'Checklist revision': draft['checklist_revision'],
             'Evidence review revision': draft['review_revision'],
             'Tender citations': _json(row['tender_sources']),
@@ -81,10 +81,28 @@ def documents_current(draft, directory, inventory):
     return True
 
 
+def row_coverage_issue(row):
+    scope = row.get('search_scope')
+    if row['status'] not in ('Judged', 'Reviewed') or scope == 'incomplete':
+        return 'Resolve incomplete evidence searches before approval.'
+    if scope == 'current_action' and row['fit'] != 'No match':
+        return 'A current signature remains a current action.'
+    if row['fit'] in GRADES[1:] and scope not in ('full_readable_scan', 'current_action'):
+        return 'Confirm the readable evidence before approving Partial match or No match.'
+    return ''
+
+
+def coverage_issue(draft):
+    if any(doc['status'] != 'Read' for doc in draft['documents']):
+        return 'Resolve unreadable selected evidence or change the selection and rerun matching.'
+    return next((issue for row in draft['rows'] if (issue := row_coverage_issue(row))), '')
+
+
 class EvidenceReview:
     def __init__(self, store, approved):
         self.store = store
         self.approved = approved
+        self.requirements = proposal_requirements(approved['rows'])
         self.key = (approved['project_id'], approved['revision'])
         with store.connect() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS evidence_reviews (
@@ -130,7 +148,7 @@ class EvidenceReview:
     def save_run(self, revision, run, readings, directory):
         tender = {row['requirement_id']: json.loads(row['source_references'])
                   for row in csv.DictReader(io.StringIO(self.approved['csv'].decode('utf-8')))}
-        requirements = self.approved['rows']
+        requirements = self.requirements
         if ((run.project_id, run.revision) != self.key
                 or [row.requirement['id'] for row in run.rows] != [row['id'] for row in requirements]):
             raise ValueError('Evidence results must cover the approved checklist in order.')
@@ -150,7 +168,7 @@ class EvidenceReview:
                          'citation_ids': ids, 'fit': result.fit, 'gap': result.gap,
                          'notes': '',
                          'current_action': result.current_action, 'status': result.status,
-                         'error': result.error, 'trace': result.trace})
+                         'error': result.error, 'trace': result.trace, 'search_scope': result.search_scope})
         selected = [doc['relative_path'] for doc in run.documents]
 
         def replace(draft):
@@ -180,11 +198,22 @@ class EvidenceReview:
     def edit(self, revision, requirement_id, fit, notes, gap, citation_ids):
         def update(draft):
             row = next(item for item in draft['rows'] if item['requirement']['id'] == requirement_id)
+            prior_status, prior_error = row['status'], row['error']
             row.update(fit=fit, notes=notes.strip(), gap=gap.strip(),
                        citation_ids=list(dict.fromkeys(citation_ids)), status='Reviewed', error='')
+            if prior_status not in ('Judged', 'Reviewed') or row.get('search_scope') == 'incomplete':
+                row.update(status=prior_status, error=prior_error)
+                if fit in ('Choose fit', 'No match') and not row['citation_ids']:
+                    row['fit'] = ''
+                    return draft
             self._validate_row(row, draft['corpus'])
             return draft
         return self._change(revision, update)
+
+    def _covers_proposal_requirements(self, draft):
+        return [row['requirement']['id'] for row in draft.get('rows', [])] == [
+            row['id'] for row in self.requirements
+        ]
 
     def current(self, directory, inventory):
         with self.store.connect() as db:
@@ -194,7 +223,8 @@ class EvidenceReview:
             row = db.execute('''SELECT payload,csv,checksum FROM evidence_approvals
                 WHERE project_id=? AND checklist_revision=? AND revision=?''',
                 (*self.key, draft['review_revision'])).fetchone()
-        if not row or not documents_current(draft, directory, inventory):
+        if (not row or not self._covers_proposal_requirements(draft)
+                or coverage_issue(draft) or not documents_current(draft, directory, inventory)):
             return None
         snapshot = json.loads(row[0])
         if snapshot['review'] != draft or _checksum(bytes(row[1])) != row[2]:
@@ -211,16 +241,16 @@ class EvidenceReview:
                 draft = self._load(db)
                 if draft['review_revision'] != revision:
                     raise ConflictError('The evidence review changed. Review the latest results before approving.')
-                if not draft.get('rows') or not documents_current(draft, directory, inventory):
+                if (not draft.get('rows') or not self._covers_proposal_requirements(draft)
+                        or not documents_current(draft, directory, inventory)):
                     raise ValueError('Evidence inputs are missing or changed. Run matching on the current selection.')
+                issue = coverage_issue(draft)
+                if issue:
+                    raise ValueError(issue)
                 for row in draft['rows']:
                     self._validate_row(row, draft['corpus'])
-                    if row['status'] not in ('Judged', 'Reviewed'):
-                        raise ValueError('Resolve every incomplete requirement before approving evidence.')
-                has_gaps = (any(row['fit'] == 'No match' for row in draft['rows'])
-                            or any(doc['status'] != 'Read' for doc in draft['documents']))
-                if has_gaps and not acknowledge:
-                    raise ValueError('Acknowledge open No match rows and source coverage gaps.')
+                if any(row['fit'] == 'No match' for row in draft['rows']) and not acknowledge:
+                    raise ValueError('Acknowledge open No match rows.')
                 if db.execute('''SELECT 1 FROM evidence_approvals
                         WHERE project_id=? AND checklist_revision=? AND revision=?''',
                         (*self.key, revision)).fetchone():

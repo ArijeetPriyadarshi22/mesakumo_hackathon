@@ -9,6 +9,8 @@ from mesakumo.persistence import ProjectStore
 from mesakumo.coverage import CoverageRuns as ExtractionRuns
 from mesakumo.models import configure_team_one, configured_model, ModelUnavailable, DisabledModel
 from mesakumo.ui.checklist import review_view
+from mesakumo.tender_overview import TenderOverviews
+from mesakumo.ui.overview import overview_view
 from mesakumo.ui.evidence import evidence_view, proposal_handoff
 
 st.set_page_config(page_title='Mesakumo', layout='wide')
@@ -33,7 +35,8 @@ phase = st.sidebar.selectbox('Phase', ['participation', 'offer'], disabled=busy)
 actions = st.sidebar.columns(2)
 actions[0].button('Rescan', disabled=busy)
 start = actions[1].button('Start extraction', type='primary', disabled=busy, on_click=begin_extraction)
-if os.environ.get('MESAKUMO_KEEP_SESSION') != 'yes':
+persistent_workspace = os.environ.get('MESAKUMO_KEEP_SESSION') == 'yes'
+if not persistent_workspace:
     from uuid import uuid4
     if 'fresh_workspace_v3' not in st.session_state:
         st.session_state.fresh_workspace_v3 = uuid4().hex
@@ -62,6 +65,16 @@ st.caption('Results are isolated by tender and phase. ' +
 if page == pages[0]:
     configure_team_one()
     runs = ExtractionRuns(store)
+    overview_path = (data if persistent_workspace else data.parent.parent) / 'tender_overviews.sqlite3'
+    overviews = None
+    overview = None
+    try:
+        if not overview_path.resolve().is_relative_to(ROOT):
+            raise ValueError('Overview cache is outside the workspace.')
+        overviews = TenderOverviews(overview_path)
+        overview = overviews.get(project, rows, phase)
+    except Exception:
+        overview = {'status': 'failed', 'message': 'Die gespeicherte Übersicht ist derzeit nicht verfügbar.'}
     saved = runs.get(project, rows)
     retry = bool(saved)
     if saved and saved['status'] in ('failed', 'running'):
@@ -85,7 +98,15 @@ if page == pages[0]:
             if isinstance(model, DisabledModel):
                 raise ModelUnavailable('Extraction is disabled. Configure Requesty access and click Start extraction again.')
             with st.spinner('Reading documents and extracting requirements…', show_time=True):
-                runs.ensure(project, rows, model, retry=retry, on_progress=update_progress)
+                try:
+                    runs.ensure(project, rows, model, retry=retry, on_progress=update_progress)
+                finally:
+                    if overviews is not None and overview is None:
+                        progress.info('Vergabeübersicht wird erstellt…')
+                        try:
+                            overviews.ensure(project, rows, phase, model)
+                        except Exception:
+                            st.session_state[f'overview_error:{project.id}'] = True
         except (ModelUnavailable, ValueError) as exc:
             st.session_state[error_key] = str(exc)
         except Exception:
@@ -116,6 +137,9 @@ if page == pages[0]:
         st.caption(f"Extraction {result['status']} · {result['steps']} actions")
     else:
         st.info('Ready to extract requirements. Click Start extraction beside Rescan in the sidebar. You can also add requirements manually below.')
+    if st.session_state.pop(f'overview_error:{project.id}', False):
+        overview = {'status': 'failed', 'message': 'Die Übersicht konnte nicht gespeichert werden.'}
+    overview_view(project, rows, phase, overview)
     review_view(store,store.load(project.id),rows)
     with st.expander('Documents and reading status'):
         st.dataframe([{'File':r['path'], 'Role':r['role'], 'Reading status':r['status'],
