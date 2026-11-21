@@ -104,6 +104,11 @@ class EvidenceTests(unittest.TestCase):
 
             class WorkingModel:
                 def complete(self, prompt):
+                    import json
+                    details = json.loads(prompt.rsplit('\n', 1)[1])
+                    if 'passages' in details:
+                        return json.dumps({'reviewed_source_ids': [p['passage_id'] for p in details['passages']],
+                                           'findings': []})
                     return ('{"tool":"submit","args":{"fit":"No match","passage_ids":[],'
                             '"gap":"No suitable reference was found."}}')
 
@@ -219,7 +224,7 @@ class EvidenceTests(unittest.TestCase):
                 widget('text_input', 'Evidence reviewer').set_value('Reviewer')
                 widget('button', 'Approve and Save Evidence').click().run()
                 self.assertTrue(any('Acknowledge' in item.value for item in app.error))
-                widget('checkbox', 'I acknowledge No match items and evidence coverage gaps').check()
+                widget('checkbox', 'I acknowledge open No match items').check()
                 with store.connect() as db:
                     db.execute('''CREATE TRIGGER fail_evidence_approval BEFORE INSERT ON evidence_approvals
                                   BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END''')
