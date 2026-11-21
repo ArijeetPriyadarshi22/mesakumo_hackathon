@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mesakumo.persistence import ConflictError, ProjectStore
 from mesakumo.proposal import (DRAFTING_SYSTEM, SCHEMA, ProposalDrafts, build_prompt, draft_row,
-                               open_items, validate_draft)
+                               handoff_csv, handoff_project, open_items, review_summary, validate_draft)
 
 
 def citation(pid, location, excerpt):
@@ -119,16 +119,85 @@ class DraftStorageTests(unittest.TestCase):
         self.store = ProjectStore(Path(temp.name) / 'workspace.sqlite3')
         self.drafts = ProposalDrafts(self.store, REVIEW)
 
-    def test_generate_edit_review_and_redraft(self):
+    def test_generate_edit_approve_and_edit_cancels_approval(self):
         self.assertEqual(self.drafts.generate('R1', Stub(PARTIAL), expected_version=0), 1)
         saved = self.drafts.all()['R1']
         self.assertEqual((saved['status'], saved['fit'], saved['citation_ids']), ('Draft', 'Partial match', ['P10']))
         self.drafts.edit('R1', saved['title'], 'Manuela Engl, MBA. [OFFEN: Verfügbarkeit bestätigen]', 1)
         self.assertEqual(self.drafts.all()['R1']['status'], 'Edited')
-        self.drafts.review('R1', 'Luba', 2)
-        self.assertEqual((self.drafts.all()['R1']['status'], self.drafts.all()['R1']['reviewer']), ('Reviewed', 'Luba'))
-        self.drafts.generate('R1', Stub(PARTIAL), expected_version=3)
-        self.assertEqual(self.drafts.all()['R1']['status'], 'Draft')
+        with self.assertRaisesRegex(ValueError, '1 open item'):
+            self.drafts.approve('R1', 'Luba', 2)
+        self.drafts.approve('R1', 'Luba', 2, accept_open_items=True)
+        saved = self.drafts.all()['R1']
+        self.assertEqual((saved['status'], saved['approved_by'], saved['approved_open_items']),
+                         ('Approved', 'Luba', ['Verfügbarkeit bestätigen']))
+        self.drafts.edit('R1', saved['title'], 'Manuela Engl, MBA, verfügbar ab Januar.', 3)
+        saved = self.drafts.all()['R1']
+        self.assertEqual(saved['status'], 'Edited')
+        self.assertNotIn('approved_by', saved)
+
+    def test_decline_then_redraft_uses_the_comment(self):
+        self.drafts.generate('R1', Stub(PARTIAL), expected_version=0)
+        with self.assertRaisesRegex(ValueError, 'what should change'):
+            self.drafts.decline('R1', 'Luba', ' ', 1)
+        self.drafts.decline('R1', 'Luba', 'Bitte Studium nicht behaupten, nur Praxiserfahrung.', 1)
+        self.assertEqual(self.drafts.all()['R1']['status'], 'Declined')
+        model = Stub(PARTIAL)
+        self.drafts.generate('R1', model, expected_version=2)
+        prompt = model.calls[0][0]
+        self.assertIn('Bitte Studium nicht behaupten', prompt)
+        self.assertIn(PARTIAL['text'][:40], prompt)  # The declined text is shown for revision.
+        self.assertIn('abgelehnt', prompt)
+        saved = self.drafts.all()['R1']
+        self.assertEqual((saved['status'], saved['redraft_of_decline']), ('Draft', True))
+        self.assertEqual(saved['declines'][0]['comment'], 'Bitte Studium nicht behaupten, nur Praxiserfahrung.')
+        self.assertNotIn('decline_comment', saved)
+        # A later plain redraft carries no feedback.
+        model = Stub(PARTIAL)
+        self.drafts.generate('R1', model, expected_version=3)
+        self.assertNotIn('abgelehnt', model.calls[0][0])
+
+    def test_package_approval_handoff_and_staleness(self):
+        self.drafts.generate('R1', Stub(PARTIAL), expected_version=0)
+        self.drafts.generate('R2', Stub({'title': 'Projektleitung', 'text': 'Erfahrung belegt.',
+                                         'used_citations': ['Q1']}), expected_version=0)
+        with self.assertRaisesRegex(ValueError, 'at least one section'):
+            self.drafts.approve_package('Luba')
+        self.drafts.approve('R2', 'Luba', 1)
+        with self.assertRaisesRegex(ValueError, '2 requirement'):
+            self.drafts.approve_package('Luba')
+        package = self.drafts.approve_package('Luba', acknowledge_excluded=True, project_name='Ausschreibung 9')
+        self.assertEqual([s['requirement_id'] for s in package['sections']], ['R2'])
+        self.assertEqual([(e['requirement_id'], e['status']) for e in package['excluded']],
+                         [('R1', 'Draft'), ('R3', 'Not drafted')])
+        self.assertEqual(self.drafts.latest_package(), (package, True))
+
+        import csv, io
+        table = list(csv.DictReader(io.StringIO(handoff_csv(package).decode('utf-8-sig'), newline='')))
+        self.assertEqual([(r['Requirement ID'], r['Section title']) for r in table], [('R2', 'Projektleitung')])
+        self.assertEqual([c['passage_id'] for c in json.loads(table[0]['Citations'])], ['P10'])
+        project = handoff_project(package, REVIEW)
+        self.assertEqual((project.name, [s.title for s in project.sections]), ('Ausschreibung 9', ['Projektleitung']))
+        self.assertEqual([r.id for r in project.requirements], ['R1', 'R2', 'R3'])
+        self.assertEqual([(e.quality, e.decision) for e in project.evidence], [('sufficient', 'Approved')])
+        self.assertEqual([p.id for p in project.passages], ['P10'])
+
+        self.drafts.decline('R1', 'Luba', 'Zu allgemein.', 1)  # Any change makes the package stale.
+        self.assertEqual(self.drafts.latest_package()[1], False)
+
+    def test_review_summary_lists_what_needs_attention(self):
+        self.drafts.generate('R1', Stub({**PARTIAL, 'text': PARTIAL['text'] + ' Sie ist als Hauptdozentin benannt.'}),
+                             expected_version=0)
+        self.drafts.generate('R3', Stub(), expected_version=0)
+        self.drafts.decline('R3', 'Luba', 'Zertifikat anfragen.', 1)
+        summary = review_summary(REVIEW, self.drafts.all(), 'Ausschreibung 9')
+        attention = summary.split('## Needs attention')[1].split('## Sections')[0]
+        self.assertIn('waiting for your decision', attention)
+        self.assertIn('check wording: benannt, hauptdozentin', attention)
+        self.assertIn('declined by Luba', attention)
+        self.assertIn('not drafted yet', attention)
+        self.assertIn('| 3 | 0 | 1 | 1 | 1 |', summary)
+        self.assertIn('> Declined by Luba: Zertifikat anfragen.', summary)
 
     def test_stale_version_is_rejected(self):
         self.drafts.generate('R1', Stub(PARTIAL), expected_version=0)
@@ -142,10 +211,12 @@ class DraftStorageTests(unittest.TestCase):
             self.drafts.generate('R1', Stub('not json'), expected_version=0)
         self.assertEqual(self.drafts.all(), {})
 
-    def test_review_needs_name_and_edit_needs_closed_markers(self):
+    def test_decisions_need_name_and_edit_needs_closed_markers(self):
         self.drafts.generate('R3', Stub(), expected_version=0)
         with self.assertRaisesRegex(ValueError, 'reviewer'):
-            self.drafts.review('R3', ' ', 1)
+            self.drafts.approve('R3', ' ', 1, accept_open_items=True)
+        with self.assertRaisesRegex(ValueError, 'reviewer'):
+            self.drafts.decline('R3', ' ', 'Kommentar', 1)
         with self.assertRaisesRegex(ValueError, 'Close every'):
             self.drafts.edit('R3', 'T', 'Text [OFFEN: offen', 1)
 
@@ -181,18 +252,57 @@ class ProposalPageTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
         return AppTest.from_function(page_script, args=(str(self.path), json.dumps(REVIEW)), default_timeout=30)
 
+    @staticmethod
+    def widget(items, label):
+        return next(w for w in items if w.label.startswith(label))
+
     def test_page_lists_sections_and_edits_a_saved_draft(self):
         ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
         app = self.app().run()
         self.assertFalse(app.exception)
         self.assertIn('drafting is unavailable', app.info[0].value)
-        self.assertEqual([m.value for m in app.metric], ['3', '1', '0', '2'])
-        self.assertIn('Open items', app.warning[-1].value)
-        app.text_area[0].set_value('Manuela Engl, MBA (laut Dozentenblatt). [OFFEN: Verfügbarkeit bestätigen]')
-        next(b for b in app.button if b.label == 'Save edits').click().run()
+        self.assertEqual([m.value for m in app.metric], ['3', '1', '0', '0', '2'])
+        self.assertTrue(any(w.value.startswith('Open items') for w in app.warning))
+        self.widget(app.text_area, 'Section text').set_value(
+            'Manuela Engl, MBA (laut Dozentenblatt). [OFFEN: Verfügbarkeit bestätigen]')
+        self.widget(app.button, 'Save edits').click().run()
         self.assertFalse(app.exception)
         saved = ProposalDrafts(self.store, REVIEW).all()['R1']
         self.assertEqual((saved['status'], open_items(saved['text'])), ('Edited', ['Verfügbarkeit bestätigen']))
+
+    def test_page_approve_decline_and_package(self):
+        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
+        app = self.app().run()
+        self.widget(app.button, '✅ Approve').click().run()
+        self.assertIn('Enter your name', app.error[0].value)  # No reviewer name yet.
+        self.widget(app.text_input, 'Your name').set_value('Luba').run()
+        self.widget(app.button, '✅ Approve').click().run()
+        self.assertIn('open item(s) remain', app.error[0].value)
+        self.widget(app.checkbox, 'Keep the 2 open item').check()
+        self.widget(app.button, '✅ Approve').click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(ProposalDrafts(self.store, REVIEW).all()['R1']['status'], 'Approved')
+
+        self.widget(app.checkbox, 'Leave out the 2 requirement').check()
+        self.widget(app.button, 'Approve draft for PPTX').click().run()
+        self.assertFalse(app.exception)
+        package, current = ProposalDrafts(self.store, REVIEW).latest_package()
+        self.assertTrue(current)
+        self.assertEqual((package['reviewer'], len(package['sections'])), ('Luba', 1))
+        self.assertTrue(any('Draft approved for the PPTX' in s.value for s in app.success))
+
+    def test_page_decline_needs_comment(self):
+        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
+        app = self.app().run()
+        self.widget(app.text_input, 'Your name').set_value('Luba').run()
+        self.widget(app.button, '❌ Decline').click().run()
+        self.assertIn('what should change', app.error[0].value)
+        self.widget(app.text_area, 'What should change').set_value('Kein Studium behaupten.')
+        self.widget(app.button, '❌ Decline').click().run()
+        self.assertFalse(app.exception)
+        saved = ProposalDrafts(self.store, REVIEW).all()['R1']
+        self.assertEqual((saved['status'], saved['decline_comment']), ('Declined', 'Kein Studium behaupten.'))
+        self.assertTrue(any('Declined by Luba' in e.value for e in app.error))
 
     def test_filters_default_to_prose_categories(self):
         app = self.app().run()

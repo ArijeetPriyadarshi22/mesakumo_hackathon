@@ -9,6 +9,9 @@ nothing is written around missing evidence.
 Drafts are stored per approved evidence revision: approving a new evidence review starts
 a fresh set, and old drafts are never shown against changed evidence.
 """
+import csv
+import hashlib
+import io
 import json
 import re
 from datetime import datetime, timezone
@@ -34,6 +37,13 @@ DRAFTING_SYSTEM = (
     'nicht als bereits erfüllte Zusage für diese Ausschreibung.\n'
     '- Personen schlägst du nur als Kandidatin oder Kandidaten vor; Einsatz, Rolle und Verfügbarkeit gelten '
     'als unbestätigt, solange kein Nachweis sie belegt.\n'
+    '- Rollen und Einsätze aus früheren Angeboten (z. B. „Hauptdozentin“) sind keine Benennung für diese '
+    'Ausschreibung. Schreibe nie, dass jemand „benannt“ ist oder eine Leistung „erbringt“, sondern höchstens, '
+    'dass mesakumo die Person als Kandidatin oder Kandidaten vorschlägt.\n'
+    '- Verlangt die Anforderung ein Formular, eine Erklärung, eine Unterschrift oder eine Einreichung, dann '
+    'beschreibe in zwei bis drei Sätzen, was einzureichen ist, und markiere die Einreichung als [OFFEN: ...]. '
+    'Erzähle dann nicht von früheren Angeboten, deren Formulare oder Einreichungen.\n'
+    '- Passt ein Nachweis inhaltlich nicht zur Anforderung, verwende ihn nicht.\n'
     '- Übertrage Aussagen über eine Person nicht auf mesakumo als Unternehmen.\n'
     '- Übernimm die Art eines Nachweises genau so, wie die Quelle sie nennt: eine Teilnahme- oder '
     'Abschlussbestätigung ist keine Zertifizierung, eine Weiterbildung kein Abschluss.\n'
@@ -59,13 +69,27 @@ def open_items(text):
     return list(dict.fromkeys(m.strip() for m in OFFEN.findall(text or '')))
 
 
+# Wording that often carries an earlier offer's staffing or a commitment over into a draft.
+CHECK_WORDING = re.compile(r'\b(benannt\w*|benenn\w*|hauptdozent\w*|vertretung der hauptdozent\w*|erbringt|'
+                           r'erbracht\w*|zertifiziert\w*|zertifizierung\w*|garantier\w*|sichergestellt)\b',
+                           re.IGNORECASE)
+
+
+def check_wording(text):
+    """Phrases a reviewer should read twice; a reading aid, not a complete check."""
+    return sorted({m.group(0).lower() for m in CHECK_WORDING.finditer(text or '')})
+
+
 def _clip(text, limit):
     text = text or ''
     return text if len(text) <= limit else text[:limit].rstrip() + ' […]'
 
 
-def build_prompt(row, corpus):
-    """Return (prompt, {alias: citation}) for one approved evidence row."""
+def build_prompt(row, corpus, feedback=None):
+    """Return (prompt, {alias: citation}) for one approved evidence row.
+
+    feedback: {'comment', 'previous_text'} when a reviewer declined the previous draft.
+    """
     requirement = row['requirement']
     cited = [corpus[pid] for pid in row['citation_ids']]
     aliases = {f'Q{n}': citation for n, citation in enumerate(cited, 1)}
@@ -82,10 +106,18 @@ def build_prompt(row, corpus):
         'nachweise': [{'id': alias, 'datei': c['filename'], 'stelle': c['location'], 'text': c['excerpt']}
                       for alias, c in aliases.items()],
     }
+    revision = ''
+    if feedback:
+        data['ueberarbeitung'] = {'rueckmeldung_der_pruefenden_person': feedback['comment'],
+                                  'abgelehnter_entwurf': feedback.get('previous_text', '')}
+        revision = ('Eine prüfende Person hat den vorherigen Entwurf abgelehnt. Schreibe den Abschnitt neu und '
+                    'setze ihre Rückmeldung um, soweit die Nachweise es erlauben; alle Regeln gelten weiter. '
+                    'Verlangt die Rückmeldung etwas, das kein Nachweis belegt, markiere es als [OFFEN: ...].\n')
     prompt = (
         'Schreibe einen kurzen Angebotsabschnitt (title, text; etwa 80 bis 250 Wörter), der die Anforderung '
         'beantwortet. Nenne in used_citations die IDs (Q1, Q2, ...) aller Nachweise, auf die sich der Text '
         'stützt. Jede Lücke und jeder nächste Schritt aus der Nachweisbewertung erscheint als [OFFEN: ...].\n'
+        + revision +
         'Antwortformat: {"title":"...","text":"...","used_citations":["Q1"]}\n\n'
         + json.dumps(data, ensure_ascii=False, indent=1))
     if len(prompt.encode()) > MAX_PROMPT_BYTES:
@@ -134,14 +166,14 @@ def validate_draft(raw, row, aliases):
     return title.strip(), text.strip(), [aliases[u]['passage_id'] for u in used]
 
 
-def draft_row(row, corpus, model):
+def draft_row(row, corpus, model, feedback=None):
     """Draft one approved evidence row. Raises ValueError or ModelUnavailable; returns a draft dict."""
     if row['fit'] == 'No match':
         return dict(title='Nachweis: ' + _clip(row['requirement']['text'], 120),
                     text=('Für diese Anforderung liegt in den geprüften Unterlagen noch kein Nachweis vor. '
                           f'[OFFEN: {NO_EVIDENCE_ITEM}]'),
                     citation_ids=[], origin='No match — fixed text, no model call')
-    prompt, aliases = build_prompt(row, corpus)
+    prompt, aliases = build_prompt(row, corpus, feedback)
     raw = model.complete_task(prompt, system=DRAFTING_SYSTEM, schema=SCHEMA, schema_name='proposal_section',
                               max_tokens=3000)
     title, text, ids = validate_draft(raw, row, aliases)
@@ -162,12 +194,14 @@ class ProposalDrafts:
                 project_id TEXT, checklist_revision INTEGER, evidence_revision INTEGER,
                 requirement_id TEXT, version INTEGER NOT NULL, payload TEXT NOT NULL,
                 PRIMARY KEY(project_id, checklist_revision, evidence_revision, requirement_id))''')
+            db.execute('''CREATE TABLE IF NOT EXISTS proposal_packages (
+                project_id TEXT, checklist_revision INTEGER, evidence_revision INTEGER,
+                revision INTEGER NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(project_id, checklist_revision, evidence_revision, revision))''')
 
     def all(self):
         with self.store.connect() as db:
-            found = db.execute('''SELECT requirement_id, version, payload FROM proposal_drafts
-                WHERE project_id=? AND checklist_revision=? AND evidence_revision=?''', self.key).fetchall()
-        return {rid: {**json.loads(payload), 'version': version} for rid, version, payload in found}
+            return self._all(db)
 
     def _write(self, requirement_id, expected_version, update):
         if requirement_id not in self.rows:
@@ -188,14 +222,28 @@ class ProposalDrafts:
                 (*self.key, requirement_id, version + 1, json.dumps(payload, ensure_ascii=False)))
         return version + 1
 
+    # Section decisions. Status: Draft → (Edited) → Approved, or Declined → redraft → Draft.
     def generate(self, requirement_id, model, expected_version=None):
-        """Draft (or redraft, replacing edits) one section. The model runs before anything is written."""
+        """Draft or redraft one section; a declined draft is rewritten using the reviewer's comment.
+
+        The model runs before anything is written, so a failed call leaves the section unchanged.
+        """
         row = self.rows.get(requirement_id)
         if row is None:
             raise ValueError('This requirement is not part of the approved evidence review.')
-        draft = draft_row(row, self.corpus, model)
-        return self._write(requirement_id, expected_version,
-                           lambda _: {**draft, 'fit': row['fit'], 'status': 'Draft', 'reviewer': ''})
+        current = self.all().get(requirement_id)
+        feedback = None
+        if current and current['status'] == 'Declined':
+            feedback = {'comment': current['decline_comment'], 'previous_text': current['text']}
+        draft = draft_row(row, self.corpus, model, feedback)
+        def update(existing):
+            declines = list((existing or {}).get('declines', []))
+            if existing and existing['status'] == 'Declined':
+                declines.append({'comment': existing['decline_comment'], 'by': existing['declined_by'],
+                                 'at': existing['updated_at'], 'text': existing['text']})
+            return {**draft, 'fit': row['fit'], 'status': 'Draft', 'declines': declines,
+                    'redraft_of_decline': bool(feedback)}
+        return self._write(requirement_id, expected_version, update)
 
     def edit(self, requirement_id, title, text, expected_version):
         if not title.strip() or not text.strip():
@@ -205,16 +253,192 @@ class ProposalDrafts:
         def update(current):
             if current is None:
                 raise ValueError('Draft this section before editing it.')
-            changed = (title.strip(), text.strip()) != (current['title'], current['text'])
-            return {**current, 'title': title.strip(), 'text': text.strip(),
-                    **({'status': 'Edited', 'reviewer': ''} if changed else {})}
+            if (title.strip(), text.strip()) == (current['title'], current['text']):
+                return current
+            # Any change cancels an earlier approval or decline: the new text needs a new decision.
+            return {**_without_decision(current), 'title': title.strip(), 'text': text.strip(), 'status': 'Edited'}
         return self._write(requirement_id, expected_version, update)
 
-    def review(self, requirement_id, reviewer, expected_version):
+    def approve(self, requirement_id, reviewer, expected_version, accept_open_items=False):
+        """Approve the current text for the PPTX. Open items must be accepted explicitly."""
         if not reviewer.strip():
             raise ValueError('Enter your name as reviewer first.')
         def update(current):
             if current is None:
-                raise ValueError('Draft this section before reviewing it.')
-            return {**current, 'status': 'Reviewed', 'reviewer': reviewer.strip()}
+                raise ValueError('Draft this section before approving it.')
+            items = open_items(current['text'])
+            if items and not accept_open_items:
+                raise ValueError(f'{len(items)} open item(s) remain. Resolve them in the text, or confirm that '
+                                 'they go into the PPTX still marked as open.')
+            return {**_without_decision(current), 'status': 'Approved', 'approved_by': reviewer.strip(),
+                    'approved_at': datetime.now(timezone.utc).isoformat(), 'approved_open_items': items}
         return self._write(requirement_id, expected_version, update)
+
+    def decline(self, requirement_id, reviewer, comment, expected_version):
+        """Decline the current text; the comment guides the next draft."""
+        if not reviewer.strip():
+            raise ValueError('Enter your name as reviewer first.')
+        if not comment.strip():
+            raise ValueError('Say what should change, so the next draft can address it.')
+        def update(current):
+            if current is None:
+                raise ValueError('Draft this section before declining it.')
+            return {**_without_decision(current), 'status': 'Declined', 'declined_by': reviewer.strip(),
+                    'decline_comment': comment.strip()}
+        return self._write(requirement_id, expected_version, update)
+
+    # Package approval: the set of approved sections handed to PPTX generation.
+    def _fingerprint(self, drafts):
+        state = sorted((rid, d['version'], d['status']) for rid, d in drafts.items())
+        return hashlib.sha256(json.dumps(state).encode()).hexdigest()
+
+    def approve_package(self, reviewer, acknowledge_excluded=False, project_name=''):
+        if not reviewer.strip():
+            raise ValueError('Enter your name as reviewer first.')
+        drafts = self.all()
+        order = list(self.rows)
+        approved = [rid for rid in order if drafts.get(rid, {}).get('status') == 'Approved']
+        if not approved:
+            raise ValueError('Approve at least one section before approving the draft for the PPTX.')
+        excluded = [rid for rid in order if rid not in approved]
+        if excluded and not acknowledge_excluded:
+            raise ValueError(f'{len(excluded)} requirement(s) have no approved section and will be left out of the '
+                             'PPTX. Confirm this, or approve them first.')
+        def section(rid):
+            row, draft = self.rows[rid], drafts[rid]
+            return dict(requirement_id=rid, requirement=row['requirement']['text'],
+                        category=row['requirement'].get('kind', ''), fit=row['fit'], title=draft['title'],
+                        text=draft['text'], open_items=open_items(draft['text']),
+                        citations=[{k: self.corpus[pid].get(k, '') for k in
+                                    ('passage_id', 'document_id', 'filename', 'location', 'excerpt', 'document_version')}
+                                   for pid in draft.get('citation_ids', [])],
+                        tender_sources=[{'filename': s.get('filename', ''), 'location': s.get('location', '')}
+                                        for s in row.get('tender_sources', [])],
+                        evidence_gap=row.get('gap', ''), approved_by=draft['approved_by'],
+                        approved_at=draft['approved_at'])
+        package = dict(project_id=self.key[0], project_name=project_name, checklist_revision=self.key[1],
+                       evidence_revision=self.key[2], reviewer=reviewer.strip(),
+                       approved_at=datetime.now(timezone.utc).isoformat(), fingerprint=self._fingerprint(drafts),
+                       sections=[section(rid) for rid in approved],
+                       excluded=[dict(requirement_id=rid, requirement=self.rows[rid]['requirement']['text'],
+                                      status=drafts.get(rid, {}).get('status', 'Not drafted')) for rid in excluded])
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if self._fingerprint(self._all(db)) != package['fingerprint']:
+                raise ConflictError('Sections changed while approving. Review the latest state and try again.')
+            latest = db.execute('''SELECT MAX(revision) FROM proposal_packages WHERE project_id=? AND
+                checklist_revision=? AND evidence_revision=?''', self.key).fetchone()[0] or 0
+            package['revision'] = latest + 1
+            db.execute('INSERT INTO proposal_packages VALUES (?,?,?,?,?)',
+                       (*self.key, latest + 1, json.dumps(package, ensure_ascii=False)))
+        return package
+
+    def latest_package(self):
+        """(package, is_current): the last approved package and whether the sections are unchanged since."""
+        with self.store.connect() as db:
+            found = db.execute('''SELECT payload FROM proposal_packages WHERE project_id=? AND
+                checklist_revision=? AND evidence_revision=? ORDER BY revision DESC LIMIT 1''', self.key).fetchone()
+        if not found:
+            return None, False
+        package = json.loads(found[0])
+        return package, package['fingerprint'] == self._fingerprint(self.all())
+
+    def _all(self, db):
+        found = db.execute('''SELECT requirement_id, version, payload FROM proposal_drafts
+            WHERE project_id=? AND checklist_revision=? AND evidence_revision=?''', self.key).fetchall()
+        return {rid: {**json.loads(payload), 'version': version} for rid, version, payload in found}
+
+
+def _without_decision(draft):
+    return {k: v for k, v in draft.items() if k not in
+            ('approved_by', 'approved_at', 'approved_open_items', 'declined_by', 'decline_comment')}
+
+
+QUALITY = {'Strong match': 'sufficient', 'Partial match': 'partial', 'No match': 'none'}
+HANDOFF_COLUMNS = ['Requirement ID', 'Requirement', 'Category', 'Evidence fit', 'Section title', 'Section text',
+                   'Open items', 'Evidence gap', 'Citations', 'Tender sources', 'Approved by']
+
+
+def handoff_csv(package):
+    """The approved sections as CSV for the model that compiles the PPTX (UTF-8 with BOM)."""
+    stream = io.StringIO(newline='')
+    writer = csv.writer(stream)
+    writer.writerow(HANDOFF_COLUMNS)
+    for s in package['sections']:
+        writer.writerow([s['requirement_id'], s['requirement'], s['category'], s['fit'], s['title'], s['text'],
+                         '\n'.join(s['open_items']), s['evidence_gap'], json.dumps(s['citations'], ensure_ascii=False),
+                         '\n'.join(f"{t['filename']} · {t['location']}" for t in s['tender_sources']),
+                         s['approved_by']])
+    return stream.getvalue().encode('utf-8-sig')
+
+
+def handoff_project(package, review):
+    """The approved package as a domain Project, as the PPTX exporter expects (approved sections only)."""
+    from dataclasses import fields
+    from .domain import EvidenceMatch, Project, ProposalSection, Requirement, SourcePassage
+    known = {f.name for f in fields(Requirement)}
+    requirements = [Requirement(**{'source_ids': [], **{k: v for k, v in row['requirement'].items() if k in known}})
+                    for row in review['rows']]
+    passages = {c['passage_id']: SourcePassage(c['passage_id'], c['document_id'], c['location'], c['excerpt'],
+                                               c['document_version'])
+                for s in package['sections'] for c in s['citations']}
+    return Project(
+        id=package['project_id'], name=package['project_name'] or package['project_id'], synthetic=False,
+        scope=f"Phase {review.get('phase', '')} · evidence revision {package['evidence_revision']}",
+        requirements=requirements, passages=list(passages.values()),
+        evidence=[EvidenceMatch('E-' + s['requirement_id'], s['requirement_id'],
+                                [c['passage_id'] for c in s['citations']], QUALITY[s['fit']], s['evidence_gap'],
+                                decision='Approved') for s in package['sections']],
+        sections=[ProposalSection('S-' + s['requirement_id'], s['title'], s['text'], [s['requirement_id']],
+                                  [c['passage_id'] for c in s['citations']], reviewed=True)
+                  for s in package['sections']])
+
+
+def review_summary(review, drafts, project_name=''):
+    """A Markdown summary for the person who approves the draft: what needs attention, then every section."""
+    rows = review['rows']
+    status = lambda rid: drafts.get(rid, {}).get('status', 'Not drafted')
+    counts = {}
+    for row in rows:
+        counts[status(row['requirement']['id'])] = counts.get(status(row['requirement']['id']), 0) + 1
+    attention = []
+    for n, row in enumerate(rows, 1):
+        rid, draft = row['requirement']['id'], drafts.get(row['requirement']['id'])
+        reasons = []
+        if draft is None:
+            reasons.append('not drafted yet')
+        else:
+            if draft['status'] == 'Declined':
+                reasons.append(f"declined by {draft['declined_by']} — waiting for a redraft")
+            if draft['status'] in ('Draft', 'Edited'):
+                reasons.append('waiting for your decision')
+            if open_items(draft['text']):
+                reasons.append(f"{len(open_items(draft['text']))} open item(s)")
+            if check_wording(draft['text']):
+                reasons.append('check wording: ' + ', '.join(check_wording(draft['text'])))
+            if row['fit'] != 'Strong match':
+                reasons.append(f"evidence: {row['fit']}")
+        if reasons and status(rid) != 'Approved' or (draft and check_wording(draft['text'])):
+            attention.append(f"- **{n}. {_clip(row['requirement']['text'], 110)}** — {'; '.join(reasons)}")
+    lines = [f"# Draft review summary{' — ' + project_name if project_name else ''}", '',
+             f"Evidence review revision {review['review_revision']} · created "
+             f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", '',
+             '| Requirements | Approved | Waiting for decision | Declined | Not drafted |', '|---|---|---|---|---|',
+             f"| {len(rows)} | {counts.get('Approved', 0)} | {counts.get('Draft', 0) + counts.get('Edited', 0)} | "
+             f"{counts.get('Declined', 0)} | {counts.get('Not drafted', 0)} |", '',
+             'Approve a section only if every statement is backed by its cited evidence. `[OFFEN: …]` marks a point '
+             'someone must confirm or supply; approved sections keep these markers in the PPTX.', '',
+             '## Needs attention', ''] + (attention or ['Nothing — every drafted section is approved.']) + ['', '## Sections', '']
+    for n, row in enumerate(rows, 1):
+        rid, draft = row['requirement']['id'], drafts.get(row['requirement']['id'])
+        lines += [f"### {n}. {draft['title'] if draft else _clip(row['requirement']['text'], 110)}", '',
+                  f"*Requirement:* {row['requirement']['text']}  ",
+                  f"*Evidence:* {row['fit']} · *Status:* {status(rid)}"
+                  + (f" by {draft['approved_by']}" if draft and draft['status'] == 'Approved' else ''), '']
+        if draft:
+            cited = [review['corpus'][pid] for pid in draft.get('citation_ids', [])]
+            lines += [f"*Cited:* {'; '.join(c['filename'] + ' · ' + c['location'] for c in cited) or '—'}", '',
+                      draft['text'], '']
+            if draft['status'] == 'Declined':
+                lines += [f"> Declined by {draft['declined_by']}: {draft['decline_comment']}", '']
+    return '\n'.join(lines) + '\n'

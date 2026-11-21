@@ -187,7 +187,7 @@ def proposal_handoff(store, project, rows, directory):
                        f"for checklist revision {draft['checklist_revision']} · {draft['phase']} · "
                        f"{len(draft['rows'])} requirements")
             from .proposal import proposal_view
-            proposal_view(store, approved)
+            proposal_view(store, approved, project.name)
         else:
             st.warning('Proposal Draft is locked. Approve and Save Evidence for the current inputs first.')
     except (OSError, ValueError) as exc:
