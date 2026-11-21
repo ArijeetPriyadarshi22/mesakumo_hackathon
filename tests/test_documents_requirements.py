@@ -155,10 +155,9 @@ class ProviderBoundaryTests(unittest.TestCase):
                 with self.assertRaises(ModelUnavailable): model.complete('prompt')
 
     def test_document_environment_name(self):
-        from mesakumo.models import configured_model, configure_team_one
+        from mesakumo.models import configured_model
         import os
         with patch.dict(os.environ, {'REQUESTY_API_KEY':'fixture-key'}, clear=True):
-            configure_team_one()  # Explicit key takes precedence over local document.
             model = configured_model()
             self.assertIsInstance(model, RequestyModel)
             self.assertEqual(model.model, 'bedrock/claude-haiku-4-5@eu-west-1')
@@ -166,26 +165,18 @@ class ProviderBoundaryTests(unittest.TestCase):
         with patch.dict(os.environ, {'REQUESTY_API_KEY':'fixture-key','MESAKUMO_LLM_PROVIDER':'disabled'}, clear=True):
             self.assertIsInstance(configured_model(), DisabledModel)
 
-    def test_team_document_preserves_full_key_and_environment_precedence(self):
+    def test_model_disabled_without_credentials_and_legacy_name_requires_opt_in(self):
         import os
-        from mesakumo.models import configure_team_one, configured_model
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / '99 LLM keys').mkdir()
-            # Synthetic credential includes characters that the previous regex lost.
-            key = 'sk-synthetic+full/value=='
-            (root / '99 LLM keys/hackathon-team-1-llm-zugang.md').write_text(
-                '# Team access\n```bash\nexport REQUESTY_API_KEY="' + key + '"\n```\n')
-            with patch('mesakumo.discovery.participant_directory', return_value=root), patch.dict(os.environ, {}, clear=True):
-                configure_team_one()
-                self.assertEqual(os.environ['MESAKUMO_LLM_API_KEY'], key)
+        from mesakumo.models import configured_model
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsInstance(configured_model(), DisabledModel)
+        with patch.dict(os.environ, {'MESAKUMO_LLM_API_KEY': 'fixture-key'}, clear=True):
+            self.assertIsInstance(configured_model(), DisabledModel)
+            with patch.dict(os.environ, {'MESAKUMO_LLM_APPROVED': 'yes'}):
                 model = configured_model()
-                self.assertEqual(model.client.api_key, key)
+                self.assertIsInstance(model, RequestyModel)
                 model.client.close()
-            with patch('mesakumo.discovery.participant_directory', return_value=root), patch.dict(os.environ, {'REQUESTY_API_KEY':'sk-explicit+value=='}, clear=True):
-                configure_team_one()
-                self.assertEqual(os.environ['REQUESTY_API_KEY'], 'sk-explicit+value==')
-                self.assertNotIn('MESAKUMO_LLM_API_KEY', os.environ)
 
 class StructuredProviderTests(unittest.TestCase):
     def test_json_schema_is_sent_to_requesty(self):

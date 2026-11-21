@@ -5,7 +5,7 @@ from ..checklist import ChecklistReview
 from ..evidence import evidence_inventory, read_evidence
 from ..evidence_matching import GRADES, match_evidence
 from ..evidence_review import EvidenceReview, coverage_issue, documents_current, review_table
-from ..models import configure_team_one, configured_model
+from ..models import configured_model
 
 
 def evidence_view(store, project, rows, directory, phase):
@@ -60,10 +60,6 @@ def _evidence_view(service, draft, approved, project, directory, phase, inventor
                               on_change=set_selection)
     st.caption('Historical proposals are past bid material. Verify their claims and commitments before reuse.')
 
-    def get_model():
-        configure_team_one()
-        return configured_model()
-
     start = st.button('Start Evidence Matching', type='primary', disabled=not selected)
     has_gaps = 'rows' in draft and coverage_issue(draft)
     retry = bool(has_gaps) and st.button('Retry Evidence Matching')
@@ -74,7 +70,7 @@ def _evidence_view(service, draft, approved, project, directory, phase, inventor
             progress.progress(done / max(total, 1), text=f'Evidence lookups attempted: {done} of {total}')
 
         readings = read_evidence(directory, inventory, selected)
-        run = match_evidence(approved, phase, readings, get_model, on_progress=update_progress,
+        run = match_evidence(approved, phase, readings, configured_model, on_progress=update_progress,
                              confirm_all=bool(retry))
         service.save_run(draft['review_revision'], run, readings, directory)
         st.rerun()

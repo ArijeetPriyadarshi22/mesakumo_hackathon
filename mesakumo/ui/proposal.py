@@ -5,7 +5,7 @@ import streamlit as st
 
 from ..evidence_review import evidence_file_issues
 from ..final_export import FinalExports, PPTX_MIME, TEMPLATE_NAME
-from ..models import DisabledModel, ModelUnavailable, configure_team_one, configured_model
+from ..models import DisabledModel, ModelUnavailable, configured_model
 from ..proposal import CITED_FITS, ProposalDrafts, handoff_csv, pending_items
 
 FIT_LABEL = {'Strong match': 'Strong', 'Partial match': 'Partial', 'No match': 'No match', '': 'Assessment open'}
@@ -34,7 +34,6 @@ def proposal_view(store, approved, project_name='', *, directory=None, inventory
     scope = ':'.join(map(str, service.key))
     drafts = service.all()
     rows = service.rows
-    configure_team_one()
     model = configured_model()
     live = not isinstance(model, DisabledModel)
     if not live:

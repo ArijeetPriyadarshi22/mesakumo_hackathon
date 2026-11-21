@@ -7,7 +7,7 @@ import streamlit as st
 from mesakumo.discovery import ROOT, participant_directory, packs, open_selection
 from mesakumo.persistence import ProjectStore
 from mesakumo.coverage import CoverageRuns as ExtractionRuns
-from mesakumo.models import configure_team_one, configured_model, ModelUnavailable, DisabledModel
+from mesakumo.models import configured_model, ModelUnavailable, DisabledModel
 from mesakumo.ui.checklist import review_view
 from mesakumo.tender_overview import TenderOverviews
 from mesakumo.ui.overview import overview_view
@@ -60,7 +60,6 @@ st.subheader(project.name)
 st.caption('Results are isolated by tender and phase. ' +
     ('Workspace persistence enabled.' if os.environ.get('MESAKUMO_KEEP_SESSION') == 'yes' else 'A new browser session starts fresh.'))
 if page == pages[0]:
-    configure_team_one()
     runs = ExtractionRuns(store)
     overview_path = (data if persistent_workspace else data.parent.parent) / 'tender_overviews.sqlite3'
     overviews = None

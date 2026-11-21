@@ -105,28 +105,3 @@ def configured_model():
         os.environ.get('MESAKUMO_LLM_MODEL', 'bedrock/claude-haiku-4-5@eu-west-1'),
         key,
     )
-
-
-def configure_team_one():
-    """Load authorized local Team 1 access in memory; never copy keys into git."""
-    from .discovery import participant_directory
-    import shlex
-    if os.environ.get('MESAKUMO_LLM_PROVIDER') or os.environ.get('REQUESTY_API_KEY'):
-        return
-    path = participant_directory() / '99 LLM keys/hackathon-team-1-llm-zugang.md'
-    if not path.is_file():
-        return
-    content = path.read_text(encoding='utf-8')
-    key = ''
-    for line in content.splitlines():
-        if line.strip().startswith('export REQUESTY_API_KEY='):
-            # Shell quoting defines the value; API keys may contain +, =, /, etc.
-            for token in shlex.split(line.strip(), comments=True):
-                if token.startswith('REQUESTY_API_KEY='):
-                    key = token.split('=', 1)[1]
-            break
-    if not key:
-        return
-    os.environ.update(MESAKUMO_LLM_PROVIDER='requesty', MESAKUMO_LLM_APPROVED='yes',
-        MESAKUMO_LLM_BASE_URL='https://router.eu.requesty.ai/v1',
-        MESAKUMO_LLM_MODEL='bedrock/claude-haiku-4-5@eu-west-1', MESAKUMO_LLM_API_KEY=key)
