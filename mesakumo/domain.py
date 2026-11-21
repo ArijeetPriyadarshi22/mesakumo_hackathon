@@ -13,6 +13,7 @@ class Document:
     version: str = 'synthetic-v1'
     available_date: str | None = None
     original_path: str = ""
+    parser_version: str = ""
     error: str = ""
 
 @dataclass
@@ -33,6 +34,7 @@ class Requirement:
     constraints: list[str] = field(default_factory=list)
     provenance: str = "Synthetic fixture"
     original_excerpts: list[str] = field(default_factory=list)
+    obligation_level: str = 'Unspecified'
 
 @dataclass
 class EvidenceMatch:
@@ -103,6 +105,10 @@ class Project:
     def fingerprint(self):
         content = self.to_dict()
         content.pop('decisions')
+        # Preserve fingerprints of legacy records that predate this optional field.
+        for requirement in content['requirements']:
+            if requirement.get('obligation_level') == 'Unspecified':
+                requirement.pop('obligation_level', None)
         return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
     @property

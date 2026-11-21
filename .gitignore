@@ -1,7 +1,7 @@
 .venv/
 .env
 .env.*
-!.env.example
+.env.example
 __pycache__/
 *.py[cod]
 .idea/
@@ -10,3 +10,6 @@ data/
 private_documents/
 exports/
 *.sqlite3*
+
+mesakumo_Input*/
+mesakumo_Input für Teilnehmer/

@@ -1,5 +1,6 @@
 """Future format-specific extraction boundary."""
 from pathlib import Path
+import posixpath
 from typing import Protocol
 from .domain import SourcePassage
 
@@ -23,22 +24,65 @@ ROLES = ('tender', 'knowledge', 'text_module', 'template')
 class LocalProcessor:
     def extract(self, path, document_id):
         suffix = path.suffix.lower()
-        version = hashlib.sha256(path.read_bytes()).hexdigest()
+        with path.open('rb') as file:
+            version = hashlib.file_digest(file, 'sha256').hexdigest()
         chunks = []
         if suffix == '.txt':
-            lines = path.read_text(encoding='utf-8-sig').splitlines()
+            try:
+                text = path.read_text(encoding='utf-8-sig')
+            except UnicodeDecodeError:
+                text = path.read_text(encoding='cp1252')
+            lines = text.splitlines()
             for start in range(0, len(lines), 20):
                 chunks.append((f'Lines {start+1}–{min(start+20, len(lines))}', '\n'.join(lines[start:start+20])))
         elif suffix == '.pdf':
             from pypdf import PdfReader
             reader = PdfReader(path)
-            if reader.is_encrypted:
+            if reader.is_encrypted and not reader.decrypt(''):
                 raise ValueError('Encrypted PDF: supply an unencrypted copy.')
             for index, page in enumerate(reader.pages, 1):
                 text = page.extract_text() or ''
                 if not text.strip():
                     raise ValueError(f'PDF page {index} has no extractable text; possible scan. OCR is not supported. No pages included.')
                 chunks.append((f'Page {index}', text))
+        elif suffix == '.xlsx':
+            ns = {'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+            with zipfile.ZipFile(path) as archive:
+                if sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024:
+                    raise ValueError('XLSX expanded size exceeds 40 MB.')
+                strings = []
+                if 'xl/sharedStrings.xml' in archive.namelist():
+                    root=ET.fromstring(archive.read('xl/sharedStrings.xml'))
+                    strings=[''.join(si.itertext()) for si in root.findall('s:si',ns)]
+                workbook=ET.fromstring(archive.read('xl/workbook.xml'))
+                rels=ET.fromstring(archive.read('xl/_rels/workbook.xml.rels'))
+                targets={r.attrib['Id']:r.attrib['Target'] for r in rels}
+                for sheet in workbook.findall('s:sheets/s:sheet',ns):
+                    rid=sheet.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
+                    target=targets[rid]
+                    member=target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/'+target)
+                    root=ET.fromstring(archive.read(member))
+                    for row in root.findall('s:sheetData/s:row',ns):
+                        cells=[]
+                        for cell in row.findall('s:c',ns):
+                            value=cell.findtext('s:v',default='',namespaces=ns)
+                            if cell.attrib.get('t')=='s': value=strings[int(value)] if value else ''
+                            elif cell.attrib.get('t')=='inlineStr':
+                                value=''.join(t.text or '' for t in cell.findall('.//s:t',ns))
+                            formula=cell.findtext('s:f',default='',namespaces=ns)
+                            if formula: value += ' [formula: '+formula+']'
+                            if value.strip(): cells.append(cell.attrib.get('r','')+': '+value)
+                        if cells: chunks.append((f"Sheet {sheet.attrib['name']} · Row {row.attrib.get('r','?')}", '\n'.join(cells)))
+        elif suffix == '.aidf':
+            with zipfile.ZipFile(path) as archive:
+                if sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024:
+                    raise ValueError('AIDF expanded size exceeds 40 MB.')
+                root=ET.fromstring(archive.read('data.lv'))
+            for index, element in enumerate(root.iter(),1):
+                if element.text and element.text.strip():
+                    chunks.append((f'data.lv · {element.tag.split("}")[-1]} · element {index}',element.text.strip()))
+        elif suffix == '.pptx':
+            chunks = presentation_text(path)
         elif suffix == '.docx':
             with zipfile.ZipFile(path) as archive:
                 if sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024:
@@ -53,13 +97,56 @@ class LocalProcessor:
                 if style is not None and 'heading' in next(iter(style.attrib.values()), '').lower():
                     heading = text
                 chunks.append((f'Body paragraph {index}' + (f' · {heading}' if heading else ''), text))
+            with zipfile.ZipFile(path) as archive:
+                for name in sorted(archive.namelist()):
+                    if name.startswith('word/') and (Path(name).name.startswith(('header','footer')) or Path(name).name in ('footnotes.xml','endnotes.xml')) and name.endswith('.xml'):
+                        extra=ET.fromstring(archive.read(name))
+                        for index, paragraph in enumerate(extra.findall('.//w:p',ns),1):
+                            text=''.join(n.text or '' for n in paragraph.findall('.//w:t',ns))
+                            if text.strip(): chunks.append((f'{Path(name).name} · paragraph {index}',text))
+
         else:
-            raise ValueError('Supported extraction formats: UTF-8 TXT, text PDF and DOCX.')
+            raise ValueError('Supported extraction formats: TXT, text PDF, DOCX, XLSX, AIDF and PPTX.')
         passages = [SourcePassage(f'{document_id}-{version[:12]}-P{i}', document_id, location, text, version)
                     for i, (location, text) in enumerate(chunks, 1) if text.strip()]
         if not passages:
             raise ValueError('No readable text found. Empty documents and scans are not analysed.')
         return passages
+
+def presentation_text(path):
+    """Read slide text in presentation order without expanding media."""
+    namespaces = {
+        'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+    }
+    relationship_id = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
+    chunks = []
+    remaining = 40 * 1024 * 1024
+    with zipfile.ZipFile(path) as archive:
+        def read_xml(member):
+            nonlocal remaining
+            remaining -= archive.getinfo(member).file_size
+            if remaining < 0:
+                raise ValueError('PPTX XML exceeds the 40 MB expanded reading limit.')
+            return ET.fromstring(archive.read(member))
+
+        presentation = read_xml('ppt/presentation.xml')
+        relationships = read_xml('ppt/_rels/presentation.xml.rels')
+        slides = {
+            item.attrib['Id']: item.attrib['Target'] for item in relationships
+            if item.get('Type', '').endswith('/slide') and item.get('TargetMode') != 'External'
+        }
+        for number, slide in enumerate(presentation.findall('p:sldIdLst/p:sldId', namespaces), 1):
+            target = slides[slide.attrib[relationship_id]]
+            member = posixpath.normpath(target.lstrip('/') if target.startswith('/') else 'ppt/' + target)
+            if not member.startswith('ppt/slides/'):
+                raise ValueError('PPTX contains an invalid slide path.')
+            root = read_xml(member)
+            paragraphs = [''.join(run.text or '' for run in paragraph.findall('.//a:t', namespaces))
+                          for paragraph in root.findall('.//a:p', namespaces)]
+            chunks.append((f'Slide {number}', '\n'.join(text for text in paragraphs if text.strip())))
+    return chunks
+
 
 def intake(project, storage_root, filename, content, role):
     if role not in ROLES:

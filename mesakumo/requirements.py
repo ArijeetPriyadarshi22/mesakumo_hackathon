@@ -19,31 +19,36 @@ def invalidate_checklist(project):
     invalidate(project)
 
 def validate_candidates(raw, passages):
+    def reject(reason):
+        raise ValueError('Invalid requirement JSON: ' + reason + '. No candidates saved.')
     try:
         data = json.loads(raw)
-        if not isinstance(data, dict) or set(data) != {'requirements'}:
-            raise ValueError()
-        rows = data['requirements']
-        if not isinstance(rows, list) or not rows or len(rows) > 200:
-            raise ValueError()
-        sources = {p.id: p for p in passages}
-        result = []
-        for row in rows:
-            if set(row) != {'statement', 'source_ids', 'kind', 'constraints'}:
-                raise ValueError()
-            if not isinstance(row['statement'], str) or not row['statement'].strip() or len(row['statement']) > 5000:
-                raise ValueError()
-            ids = row['source_ids']
-            if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in sources for i in ids):
-                raise ValueError()
-            if row['kind'] not in KINDS or not isinstance(row['constraints'], list) or any(not isinstance(c, str) for c in row['constraints']):
-                raise ValueError()
-            result.append(Requirement('R-' + uuid4().hex, row['statement'], ids, row['kind'],
-                constraints=row['constraints'], provenance='Requesty model candidate — semantically unverified',
-                original_excerpts=[sources[i].excerpt for i in ids]))
-        return result
-    except (ValueError, TypeError, KeyError):
-        raise ValueError('Invalid requirement JSON or unknown source reference. No candidates saved.') from None
+    except (ValueError, TypeError):
+        reject('response is not JSON')
+    if not isinstance(data, dict) or set(data) != {'requirements'}:
+        reject('expected only a requirements field')
+    rows = data['requirements']
+    if not isinstance(rows, list) or not rows or len(rows) > 200:
+        reject('requirements must contain 1 to 200 rows')
+    sources = {p.id: p for p in passages}
+    result = []
+    for index, row in enumerate(rows, 1):
+        prefix = f'row {index}: '
+        if not isinstance(row, dict) or set(row) != {'statement', 'source_ids', 'kind', 'constraints'}:
+            reject(prefix + 'expected statement, source_ids, kind and constraints only')
+        if not isinstance(row['statement'], str) or not row['statement'].strip() or len(row['statement']) > 5000:
+            reject(prefix + 'statement must be nonempty text of at most 5000 characters')
+        ids = row['source_ids']
+        if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in sources for i in ids):
+            reject(prefix + 'source_ids must cite known passage IDs from batches already read; document and batch IDs are not citations')
+        if row['kind'] not in KINDS:
+            reject(prefix + 'kind must be one of ' + ', '.join(KINDS))
+        if not isinstance(row['constraints'], list) or any(not isinstance(c, str) for c in row['constraints']):
+            reject(prefix + 'constraints must be a list of strings')
+        result.append(Requirement('R-' + uuid4().hex, row['statement'], ids, row['kind'],
+            constraints=row['constraints'], provenance='Requesty model candidate — semantically unverified',
+            original_excerpts=[sources[i].excerpt for i in ids]))
+    return result
 
 def extract_candidates(project, model):
     passages = tender_passages(project)
@@ -94,18 +99,18 @@ def delete_requirement(project, target, reviewer):
     project.decisions.append(ReviewDecision(target, project.revision, project.fingerprint(), reviewer,
         datetime.now(timezone.utc).isoformat(), 'Requirement deleted'))
 
-def check_reviewable(project):
+def check_reviewable(project, allow_source_gaps=False):
     current = {p.id for p in tender_passages(project)}
     latest = {d.id: d for d in project.documents if d.role == 'tender'}
-    if any(d.error for d in latest.values()):
+    if not allow_source_gaps and any(d.error for d in latest.values()):
         raise ValueError('Replace failed tender versions before recording checklist review.')
     if any(not r.source_ids or any(i not in current for i in r.source_ids) for r in project.requirements):
         raise ValueError('Requirements reference missing or historical tender passages. Correct their sources before review.')
 
-def review_checklist(project, reviewer):
+def review_checklist(project, reviewer, allow_source_gaps=False):
     if not reviewer.strip() or not project.requirements:
         raise ValueError('A nonempty checklist and reviewer label are required.')
-    check_reviewable(project)
+    check_reviewable(project, allow_source_gaps=allow_source_gaps)
     for item in project.requirements:
         item.reviewed = True
     invalidate(project)

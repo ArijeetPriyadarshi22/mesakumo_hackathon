@@ -1,58 +1,53 @@
 # Current implementation state
 
-Updated: 20 November 2026. Documents → Requirements milestone: **partial**;
-implemented offline workflow and provider boundary, awaiting real inputs/live check.
+Updated 21 November 2026. Page 2 milestones A through C are complete. Reviewers can
+match, edit and approve evidence against the approved checklist, then
+download a separate reviewed evidence CSV.
 
-Works: four stages; document-project creation; original retention and SHA-256
-versions; TXT line ranges, PDF pages, DOCX body paragraphs/headings/table text;
-visible failures; inspectable sources; structured candidate validation; manual
-requirement add/edit/delete/classify with provenance; checklist review; SQLite
-reopen; invalidation and final approval gates. Synthetic sample stays separate.
+Launch with `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
+The legacy CLI remains available separately via `.venv/bin/python -m mesakumo`.
 
-Stack: existing Python 3.11.9 `.venv`, standard-library HTTP/HTML, dataclasses,
-SQLite, pypdf 6.21.4; standard-library ZIP/XML DOCX and urllib Requesty adapter.
-Retain UI to preserve tested behaviour; no agent framework introduced.
+Page 1 schedules readable tender batches, shows coverage gaps, and makes
+requirements searchable with their original source excerpts. Reviewers can
+edit, add, or remove rows and use Approve and Save to commit the checklist
+snapshot and CSV together. The CSV header is `requirement`. Approval is tied to
+the project, revision, fingerprint and source snapshot. New browser sessions
+start fresh by default. Set `MESAKUMO_KEEP_SESSION=yes` to restore a workspace.
 
-```sh
-cd /Users/arijeet/Documents/Mesakumo_hackathon
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m mesakumo
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python tests/http_smoke.py
-```
+Page 2 uses the saved approval to display the same project, phase, revision
+and requirement IDs. Use Continue to Evidence Matching after saving approval.
+An edit or source change that invalidates the approval locks Page 2.
 
-Open http://127.0.0.1:8501; stop with Ctrl+C. The implementation-session verification server was stopped; this port is free for your run. Data stays within the project root.
+The evidence picker offers Previous project sources, Team information and
+Historical proposal from the inventory. Select all eligible and Clear
+selection are available. Start Evidence Matching captures the approved
+revision and selected document versions. The run indexes readable passages
+locally and uses one configured Requesty model with LangGraph to judge each
+approved requirement. Citations are restricted to retrieved selected passages
+and resolved to original text, filename, location, role and version. Historical
+proposals are past bid material. Current actions and confirmations are flagged
+separately. Buyer packs, blank buyer forms, templates and credentials are excluded.
 
-Configuration names: MESAKUMO_DATA_DIR, MESAKUMO_PORT, MESAKUMO_LLM_PROVIDER,
-MESAKUMO_LLM_APPROVED, MESAKUMO_LLM_BASE_URL, MESAKUMO_LLM_MODEL,
-MESAKUMO_LLM_API_KEY. `.env` is not auto-loaded. Default provider is disabled.
-See README for the verified Requesty EU endpoint and private setup instructions.
+Failed or skipped lookups remain incomplete and block evidence approval.
+Reviewers can inspect exact tender and historical evidence citations separately,
+change grades and notes, and edit citations drawn from the selected corpus.
+No match rows and source coverage gaps can be acknowledged during approval.
 
-Verification: 17 unittest checks pass; optional actual HTTP smoke check passes
-including multipart intake, manual review, failed disabled call and process restart.
-Browser host unavailable, no visual check. Requesty boundary tested with mocks;
-no credentials/live calls or real-tender accuracy check. No Git repository/hash.
+Evidence approval and its UTF-8 CSV are stored atomically in SQLite. The CSV
+has one row per requirement, matches the review table, and carries gap/action
+notes and structured citations. Page 3 confirms receipt only while the Page 1
+approval, evidence review, selection and selected document versions are current.
+Reopen the same workspace by enabling `MESAKUMO_KEEP_SESSION=yes`.
 
-Missing: supplied tender/knowledge/text modules/template and approved Claude model
-ID/key/data-use instructions. No OCR or full DOCX layout support. No automatic
-chunking for >48 KB extraction input. No evidence search/review, proposal
-generation, corporate export or full historical snapshots. Template constraints
-remain unknown; a template-role upload is stored only. Renamed files create new
-IDs; repeated extraction appends possible duplicates.
+Automated and scripted checks: all 62 tests and the legacy HTTP smoke test
+passed. The Streamlit flow verified editing, downloads, reopen, rollback and
+approval invalidation. The main reference deck yielded 64 text passages in the
+local citation check. The earlier inventory audit read 16 of 19 eligible files,
+with three PDFs flagged for textless pages.
 
-Next milestone and acceptance:
-1. Close the live extraction gap: configure approved access, inspect supplied tender,
-   run one authorised extraction, compare dates/quantities/mandatory conditions
-   against its source and reopen the corrected reviewed checklist. Verify browser UI.
-2. Then add evidence candidate review: permitted company passages shown alongside
-   requirements; accept/reject/partial/no-match decisions persist and invalidate
-   downstream review. Keep evidence quality separate from checklist review and
-   coverage. Inspect corporate template before selecting export tooling.
+The milestone B live synthetic Requesty check passed. Milestone C used scripted
+matching and local files. Real tender grading and visual browser QA remain
+unverified.
 
-Handoff prompt: Continue in this root. Read PRODUCT_PLAN.md, README.md,
-PROJECT_STATUS.md and IMPLEMENTATION_LOG.md first. Preserve existing UI and state.
-Rerun both test commands. Obtain approved Requesty EU Claude model ID/key and
-permitted sample documents; finish live extraction and browser verification, then
-implement evidence candidate review with visible supporting passages and honest
-no-match outcomes. Do not build proposal generation/export before scoping the
-supplied corporate template. Record remaining gaps accurately.
+Remaining work includes OCR, real tender grading validation, proposal drafting
+and corporate export. Page 3 is limited to the approved evidence handoff.
