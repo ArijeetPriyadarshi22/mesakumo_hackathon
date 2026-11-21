@@ -259,3 +259,81 @@ class EvidenceTests(unittest.TestCase):
                 self.assertTrue(any('locked' in item.value for item in app.warning))
                 self.assertFalse(app.multiselect)
                 self.assertFalse(app.dataframe)
+
+    def test_only_proposal_requirements_reach_matching_and_approved_handoff(self):
+        import hashlib
+        import json
+        from mesakumo.domain import ADMIN_SCOPE, PROPOSAL_SCOPE
+        from mesakumo.evidence_matching import match_evidence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            pack = directory / 'Ausschreibung 1'
+            pack.mkdir()
+            (pack / 'spec.txt').write_text('Include a project reference. Submit via the portal.')
+            write_deck(directory / MAIN_DECK)
+            store = ProjectStore(directory / 'workspace.sqlite3')
+            project, rows = open_selection(store, pack, 'single')
+            checklist = ChecklistReview(store)
+
+            def edit(target, text, *, scope=None):
+                return checklist.edit(project.id, store.load(project.id).revision, rows, target,
+                                      text, 'submission instruction' if 'portal' in text else 'deliverable',
+                                      'Mandatory', [project.passages[0].id], [], 'Reviewer', 'Checked', scope=scope)
+
+            proposal = edit('', 'Include a project reference')
+            administrative = edit('', 'Submit via the portal')
+            legacy = checklist.approve(project.id, store.load(project.id).revision, rows, 'Reviewer', True)
+            # Remove scope from the saved project, approval payload and CSV to simulate an old workspace.
+            old_project = store.load(project.id).to_dict()
+            for row in old_project['requirements']:
+                row.pop('scope')
+            old_metadata = {key: value for key, value in legacy.items() if key != 'csv'}
+            for row in old_metadata['rows']:
+                row.pop('scope')
+            records = list(csv.reader(io.StringIO(legacy['csv'].decode())))
+            column = records[0].index('requirement_scope')
+            for record in records:
+                record.pop(column)
+            output = io.StringIO(newline='')
+            csv.writer(output).writerows(records)
+            old_csv = output.getvalue().encode()
+            with store.connect() as db:
+                db.execute('UPDATE projects SET payload=? WHERE id=?', (json.dumps(old_project), project.id))
+                db.execute('UPDATE checklist_approvals SET payload=?,csv=?,checksum=? WHERE project_id=?',
+                           (json.dumps(old_metadata), old_csv, hashlib.sha256(old_csv).hexdigest(), project.id))
+            reopened = checklist.current(store.load(project.id), rows)
+            self.assertEqual({r['scope'] for r in reopened['rows']}, {PROPOSAL_SCOPE})
+            self.assertEqual({r['requirement_scope'] for r in csv.DictReader(io.StringIO(reopened['csv'].decode()))},
+                             {PROPOSAL_SCOPE})
+
+            edit(administrative, 'Submit via the portal', scope=ADMIN_SCOPE)
+            self.assertIsNone(checklist.current(store.load(project.id), rows))
+            approved = checklist.approve(project.id, store.load(project.id).revision, rows, 'Reviewer', True)
+            exported = {r['requirement_id']: r['requirement_scope']
+                        for r in csv.DictReader(io.StringIO(approved['csv'].decode()))}
+            self.assertEqual(exported, {proposal: PROPOSAL_SCOPE, administrative: ADMIN_SCOPE})
+
+            inventory = evidence_inventory()
+            readings = read_evidence(directory, inventory, [MAIN_DECK])
+            passage_id = readings[0].passages[0].id
+            prompts = []
+
+            class Model:
+                def complete(self, prompt):
+                    prompts.append(prompt)
+                    return json.dumps({'tool': 'submit', 'args': {
+                        'fit': 'Strong match', 'passage_ids': [passage_id], 'gap': ''}})
+
+            run = match_evidence(approved, 'single', readings, Model)
+            self.assertEqual(len(prompts), 1)
+            self.assertNotIn('Submit via the portal', prompts[0])
+            self.assertEqual([row.requirement['id'] for row in run.rows], [proposal])
+            service = EvidenceReview(store, approved)
+            draft = service.select(0, [MAIN_DECK])
+            draft = service.save_run(draft['review_revision'], run, readings, directory)
+            service.approve(draft['review_revision'], directory, inventory, 'Reviewer', False)
+            handoff = service.current(directory, inventory)
+            self.assertEqual([row['requirement']['id'] for row in handoff['review']['rows']], [proposal])
+            evidence_row, = csv.DictReader(io.StringIO(handoff['csv'].decode()))
+            self.assertEqual(evidence_row['Requirement ID'], proposal)

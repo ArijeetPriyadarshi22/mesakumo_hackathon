@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from .evidence import resolve_evidence_path
 from .evidence_matching import GRADES, LexicalIndex
 from .documents import MAX_FILE_BYTES
+from .domain import proposal_requirements
 from .persistence import ConflictError
 
 COLUMNS = ['Requirement', 'Category', 'Tender sources', 'Evidence', 'Evidence sources', 'Evidence fit']
@@ -29,7 +30,7 @@ def review_table(draft):
         requirement = row['requirement']
         evidence = [draft['corpus'][pid] for pid in row['citation_ids']]
         references = lambda citations: '\n'.join(f"{c['filename']} · {c['location']}" for c in citations)
-        rows.append(dict(zip(COLUMNS, (
+        rows.append({'Requirement ID': requirement['id']} | dict(zip(COLUMNS, (
             requirement['text'], requirement['kind'], references(row['tender_sources']),
             '\n\n'.join(filter(None, [row['notes'], *(c['excerpt'] for c in evidence)])),
             references(evidence), row['fit'],
@@ -46,7 +47,6 @@ def evidence_csv(draft):
     writer.writeheader()
     for values, row in zip(review_table(draft), draft['rows']):
         writer.writerow(values | {
-            'Requirement ID': row['requirement']['id'],
             'Checklist revision': draft['checklist_revision'],
             'Evidence review revision': draft['review_revision'],
             'Tender citations': _json(row['tender_sources']),
@@ -102,6 +102,7 @@ class EvidenceReview:
     def __init__(self, store, approved):
         self.store = store
         self.approved = approved
+        self.requirements = proposal_requirements(approved['rows'])
         self.key = (approved['project_id'], approved['revision'])
         with store.connect() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS evidence_reviews (
@@ -147,7 +148,7 @@ class EvidenceReview:
     def save_run(self, revision, run, readings, directory):
         tender = {row['requirement_id']: json.loads(row['source_references'])
                   for row in csv.DictReader(io.StringIO(self.approved['csv'].decode('utf-8')))}
-        requirements = self.approved['rows']
+        requirements = self.requirements
         if ((run.project_id, run.revision) != self.key
                 or [row.requirement['id'] for row in run.rows] != [row['id'] for row in requirements]):
             raise ValueError('Evidence results must cover the approved checklist in order.')
@@ -209,6 +210,11 @@ class EvidenceReview:
             return draft
         return self._change(revision, update)
 
+    def _covers_proposal_requirements(self, draft):
+        return [row['requirement']['id'] for row in draft.get('rows', [])] == [
+            row['id'] for row in self.requirements
+        ]
+
     def current(self, directory, inventory):
         with self.store.connect() as db:
             db.execute('BEGIN')
@@ -217,7 +223,8 @@ class EvidenceReview:
             row = db.execute('''SELECT payload,csv,checksum FROM evidence_approvals
                 WHERE project_id=? AND checklist_revision=? AND revision=?''',
                 (*self.key, draft['review_revision'])).fetchone()
-        if not row or coverage_issue(draft) or not documents_current(draft, directory, inventory):
+        if (not row or not self._covers_proposal_requirements(draft)
+                or coverage_issue(draft) or not documents_current(draft, directory, inventory)):
             return None
         snapshot = json.loads(row[0])
         if snapshot['review'] != draft or _checksum(bytes(row[1])) != row[2]:
@@ -234,7 +241,8 @@ class EvidenceReview:
                 draft = self._load(db)
                 if draft['review_revision'] != revision:
                     raise ConflictError('The evidence review changed. Review the latest results before approving.')
-                if not draft.get('rows') or not documents_current(draft, directory, inventory):
+                if (not draft.get('rows') or not self._covers_proposal_requirements(draft)
+                        or not documents_current(draft, directory, inventory)):
                     raise ValueError('Evidence inputs are missing or changed. Run matching on the current selection.')
                 issue = coverage_issue(draft)
                 if issue:
