@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 from .agent import encoded, parse_action
 from .evidence_confirmation import confirm_evidence
 from .models import ModelUnavailable
+from .domain import proposal_requirements
 
 GRADES = ('Strong match', 'Partial match', 'No match')
 MAX_ACTIONS = 4
@@ -253,12 +254,15 @@ def _confirm_row(row, index, model_call):
 
 def match_evidence(approved, phase, readings, model_factory, on_progress=None, *, confirm_all=False):
     """Run once per approved row and keep failed or unprocessed rows visible."""
-    requirements = deepcopy(approved['rows'])
+    requirements = deepcopy(proposal_requirements(approved['rows']))
     rows = [MatchRow(requirement, current_action=current_action(requirement)) for requirement in requirements]
     documents = [{**asdict(r.source), 'status':r.status, 'detail':r.detail,
                   'version':r.version or (r.passages[0].document_version if r.passages else None)}
                  for r in readings]
     run = MatchingRun(approved['project_id'], phase, approved['revision'], documents, rows)
+    if not rows:
+        run.status = 'Complete'
+        return run
     index = LexicalIndex(readings)
     if not index.entries:
         run.status = 'Failed'

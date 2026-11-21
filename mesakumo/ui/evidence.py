@@ -25,10 +25,13 @@ def evidence_view(store, project, rows, directory, phase):
 def _evidence_view(service, draft, approved, project, directory, phase, inventory):
     revision = approved['revision']
     st.success(f"Received approved checklist revision {revision} · {project.name}")
-    st.caption(f"Project {approved['project_id']} · Phase {phase} · {len(approved['rows'])} approved requirements")
+    st.caption(f"Project {approved['project_id']} · Phase {phase} · {len(service.requirements)} approved proposal requirements")
     with st.expander('Approved requirements'):
         st.dataframe([{'Requirement ID': row['id'], 'Requirement': row['text']}
-                      for row in approved['rows']], hide_index=True, width='stretch')
+                      for row in service.requirements], hide_index=True, width='stretch')
+    if not service.requirements:
+        st.info('This checklist has no proposal requirements to match.')
+        return
 
     st.subheader('Evidence sources')
     scope = f'{project.id}:{phase}:{revision}:{service.store.path}'
@@ -181,7 +184,11 @@ def render_review(service, draft, directory, inventory, scope, fresh):
 def proposal_handoff(store, project, rows, directory):
     try:
         checklist = ChecklistReview(store).current(project, rows)
-        approved = EvidenceReview(store, checklist).current(directory, evidence_inventory()) if checklist else None
+        service = EvidenceReview(store, checklist) if checklist else None
+        if service is not None and not service.requirements:
+            st.info('This checklist has no proposal requirements for drafting.')
+            return
+        approved = service.current(directory, evidence_inventory()) if service else None
         if approved:
             draft = approved['review']
             st.success(f"Received approved evidence review revision {draft['review_revision']} "

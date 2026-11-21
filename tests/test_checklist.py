@@ -90,9 +90,12 @@ class ChecklistTests(unittest.TestCase):
     def test_backward_compatible_obligation_default(self):
         from mesakumo.domain import Project
         raw=self.store.load(self.pid).to_dict()
-        for r in raw['requirements']:r.pop('obligation_level')
+        for r in raw['requirements']:
+            r.pop('obligation_level')
+            r.pop('scope')
         restored = Project.from_dict(raw)
         self.assertEqual(restored.requirements[0].obligation_level,'Unspecified')
+        self.assertEqual(restored.requirements[0].scope, 'Proposal requirement')
         import hashlib
         raw.pop('decisions')
         legacy = hashlib.sha256(json.dumps(raw,sort_keys=True).encode()).hexdigest()
