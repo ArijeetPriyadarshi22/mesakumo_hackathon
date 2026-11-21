@@ -37,9 +37,19 @@ class UITests(unittest.TestCase):
                 def serve_forever(self):
                     home = self.request()
                     token = re.search(r'name="token" value="([^"]+)"', home)[1]
+                    outer.assertIn('No document projects yet', home)
+                    outer.assertIn('<summary>Practice samples</summary>', home)
+                    created = self.request(data=dict(token=token, action='new_project', stage=0,
+                                                     name='Training tender', scope='Workshop delivery'))
+                    outer.assertIn('303', created)
+                    document_id, = [item[0] for item in store.list_projects(synthetic=False)]
+                    for stage in (0, 1):
+                        entry = self.request(f'/?project={document_id}&stage={stage}')
+                        outer.assertIn('Open Evidence Matching', entry)
+                    outer.assertIn('Approved Task 1 CSV', self.request(f'/evidence?project={document_id}'))
                     response = self.request(data=dict(token=token, action='create', stage=0))
                     outer.assertIn('303', response)
-                    key = store.list_projects()[0][0]
+                    key = store.list_projects(synthetic=True)[0][0]
                     for stage in range(4):
                         response = self.request(f'/?project={key}&stage={stage}')
                         outer.assertIn('200 OK', response)
@@ -51,5 +61,5 @@ class UITests(unittest.TestCase):
                     outer.assertIn('400 Bad Request', denied)
                 def server_close(self):
                     pass
-            with patch('mesakumo.ui.server.HTTPServer', Server):
+            with patch('mesakumo.ui.server.ThreadingHTTPServer', Server):
                 serve(store)

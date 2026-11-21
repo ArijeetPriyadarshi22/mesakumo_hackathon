@@ -1,6 +1,6 @@
 """Loopback-only HTML interface, with CSRF and stale-form protection."""
 from html import escape
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
 import secrets
 from email.parser import BytesParser
@@ -11,15 +11,18 @@ from ..documents import intake
 from ..models import configured_model, ModelUnavailable
 from .. import requirements
 from .intake import documents_view, checklist_view
+from .evidence_review import PAGE_STYLES, EvidencePage, EvidenceSettings
 from .. import workflow
 from ..sample import sample_project
 
 def h(value):
     return escape(str(value), quote=True)
 
-def serve(store, port=8501):
+def serve(store, port=8501, *, evidence_settings=None, evidence_model_factory=None):
     token = secrets.token_urlsafe(32)
     stages = ['Documents', 'Requirements and evidence', 'Draft and resolve', 'Review and export']
+    evidence_page = EvidencePage(store, token, evidence_settings or EvidenceSettings.from_environment(),
+                                 evidence_model_factory)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -42,10 +45,33 @@ def serve(store, port=8501):
                 f'<input type="hidden" name="{k}" value="{h(v)}">' for k, v in fields.items()) + body + '</form>'
 
         def do_GET(self):
-            if urlsplit(self.path).path != '/':
+            path = urlsplit(self.path).path
+            params = parse_qs(urlsplit(self.path).query)
+            if path == '/evidence':
+                try:
+                    project = store.load(params.get('project', [''])[0])
+                    if params.get('download') == ['csv']:
+                        data = evidence_page.download(project)
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/csv; charset=utf-8')
+                        self.send_header('Content-Disposition', 'attachment; filename="task2-evidence.csv"')
+                        self.send_header('Cache-Control', 'no-store')
+                        self.send_header('X-Content-Type-Options', 'nosniff')
+                        self.end_headers()
+                        self.wfile.write(data)
+                    else:
+                        self.send_html(
+                            '<!doctype html><html lang="en"><meta charset="utf-8">'
+                            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                            f'<title>Evidence Matching</title><style>{PAGE_STYLES}</style><body><main>'
+                            + evidence_page.render(project) + '</main></body></html>'
+                        )
+                except (ValueError, KeyError) as error:
+                    self.send_html(f'<h1>Cannot open evidence report</h1><p>{h(error)}</p><a href="/">Home</a>', 400)
+                return
+            if path != '/':
                 self.send_html('Not found', 404)
                 return
-            params = parse_qs(urlsplit(self.path).query)
             try:
                 stage = int(params.get('stage', ['0'])[0])
                 if stage not in range(4):
@@ -53,12 +79,26 @@ def serve(store, port=8501):
                 project_id = params.get('project', [''])[0]
                 project = store.load(project_id) if project_id else None
                 body = '<h1>Tender → Proposal</h1><p>Local single-user workspace · Model access requires explicit configuration</p>'
-                body += '<aside><h2>Saved projects</h2>'
-                for key, name in store.list_projects():
-                    body += f'<p><a href="/?project={h(key)}">{h(name)}</a></p>'
-                body += self.form(None, 0, 'new_project', '<label>Project name<input name="name" required></label><label>Declared tender scope<input name="scope" required></label><button>Create document project</button>')
-                body += self.form(None, 0, 'create', '<button>Create new synthetic sample</button>') + '</aside>'
                 if project:
+                    body += '<details><summary>Switch or create a project</summary>'
+                documents = store.list_projects(synthetic=False)
+                body += '<aside><h2>Document projects</h2>'
+                for key, name in documents:
+                    body += f'<p><a href="/?project={h(key)}">{h(name)}</a></p>'
+                if not documents:
+                    body += '<p>No document projects yet. Already have Task 1’s approved CSV? Create a document project, then open Evidence Matching.</p>'
+                body += self.form(None, 0, 'new_project',
+                                  '<label>Project name — the name shown in this workspace<br>'
+                                  '<input name="name" placeholder="Digitalisierungspaten" required></label>'
+                                  '<label>Declared tender scope — the work this tender covers<br>'
+                                  '<input name="scope" placeholder="Trainer qualifications and webinar delivery" required></label>'
+                                  '<button>Create document project</button>')
+                body += '<details><summary>Practice samples</summary>'
+                for key, name in store.list_projects(synthetic=True):
+                    body += f'<p><a href="/?project={h(key)}">{h(name)}</a></p>'
+                body += self.form(None, 0, 'create', '<button>Create new synthetic sample</button>') + '</details></aside>'
+                if project:
+                    body += '</details>'
                     body += f'<h2>{h(project.name)}</h2><p class="notice">SYNTHETIC EXERCISE — not company evidence or a real proposal.</p>' if project.synthetic else f'<h2>{h(project.name)}</h2>'
                     body += f'<p>{h(project.scope)}</p><p>Revision {project.revision} · {h(workflow.readiness(project))}</p><nav>'
                     for index, label in enumerate(stages):
@@ -90,15 +130,13 @@ def serve(store, port=8501):
                         for decision in project.decisions:
                             body += f'<p>{h(decision.decision)} · revision {decision.revision} · {h(decision.reviewer)} · {h(decision.timestamp)}<br>Snapshot: <code>{h(decision.fingerprint[:16])}</code></p>'
                         body += '<p>Corporate-template export is not implemented. Approval creates no file. No template has been supplied.</p><button disabled>Export proposal — unavailable</button>'
-                else:
-                    body += '<p>Open a saved project or create a clearly labelled synthetic sample to explore the four stages.</p>'
                 self.send_html('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mesakumo workspace</title><style>body{font:16px system-ui;max-width:1100px;margin:32px auto;padding:0 20px;color:#192b3c;background:#f4f6f8}article,aside{background:white;padding:18px;margin:16px 0;border:1px solid #ccd4dd;border-radius:8px}nav{display:flex;gap:16px;flex-wrap:wrap}a{color:#075c9d}a[aria-current]{font-weight:bold}textarea{width:98%;min-height:100px}label{display:block;margin:12px 0}button,input{padding:9px}button{margin:6px 0}.notice{background:#fff0bd;padding:12px}form{margin:12px 0}code{overflow-wrap:anywhere}</style><body>' + body + '</body></html>')
             except (ValueError, KeyError) as error:
                 self.send_html(f'<h1>Cannot open workspace</h1><p>{h(error)}</p><a href="/">Home</a>', 400)
 
         def do_POST(self):
             try:
-                if self.path != '/':
+                if self.path not in ('/', '/evidence'):
                     raise ValueError('Unknown action path')
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 16 * 1024 * 1024:
@@ -124,6 +162,14 @@ def serve(store, port=8501):
                     return data.get(name, [''])[0]
                 if not secrets.compare_digest(field('token'), token):
                     raise ValueError('Invalid session token. Reload the page.')
+                if self.path == '/evidence':
+                    project = store.load(field('project'))
+                    evidence_page.change(project, data, filename, file_content)
+                    self.send_response(303)
+                    target = field('target') if field('action') == 'save' else None
+                    self.send_header('Location', evidence_page.url(project.id, requirement=target))
+                    self.end_headers()
+                    return
                 action = field('action')
                 if action == 'new_project':
                     if not field('name').strip() or not field('scope').strip():
@@ -170,7 +216,7 @@ def serve(store, port=8501):
             except (ValueError, StopIteration, UnicodeError, ModelUnavailable) as error:
                 self.send_html(f'<h1>Change not saved</h1><p>{h(error) or "Unknown record"}</p><p>Use Back, then reload to see the current saved version.</p><a href="/">Home</a>', 400)
 
-    server = HTTPServer(('127.0.0.1', port), Handler)
+    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     print(f'Workspace: http://127.0.0.1:{server.server_port}', flush=True)
     try:
         server.serve_forever()

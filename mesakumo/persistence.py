@@ -17,10 +17,15 @@ class ProjectStore:
     def connect(self):
         return sqlite3.connect(self.path)
 
-    def list_projects(self):
+    def list_projects(self, *, synthetic=None):
         with self.connect() as db:
+            query = 'SELECT id, payload FROM projects'
+            parameters = ()
+            if synthetic is not None:
+                query += " WHERE json_extract(payload, '$.synthetic') = ?"
+                parameters = (synthetic,)
             return [(key, json.loads(payload)['name']) for key, payload in
-                    db.execute('SELECT id, payload FROM projects ORDER BY id')]
+                    db.execute(query + ' ORDER BY id', parameters)]
 
     def load(self, project_id):
         with self.connect() as db:

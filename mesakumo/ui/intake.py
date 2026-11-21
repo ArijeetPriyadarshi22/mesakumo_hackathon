@@ -1,9 +1,17 @@
 """Document and checklist forms; escaped untrusted content throughout."""
 from html import escape as h
+from urllib.parse import urlencode
 from ..requirements import KINDS, tender_passages
 
+def evidence_entry(project):
+    url = '/evidence?' + urlencode({'project': project.id})
+    return ('<article><h3>Already have the approved Task 1 CSV?</h3>'
+            '<p>Bring it directly to Task 2. The matcher reads the historical company files from the local inventory.</p>'
+            f'<a href="{h(url)}"><strong>Open Evidence Matching</strong></a></article>')
+
 def documents_view(project, form):
-    body = '<p>Upload UTF-8 TXT, text PDF or DOCX (15 MB maximum). Sources are untrusted document content. Inspect extraction completeness before use.</p>'
+    body = '' if project.synthetic else evidence_entry(project) + '<h3>Upload a project document</h3>'
+    body += '<p>Use this upload to store an original document and inspect its text. Upload UTF-8 TXT, text PDF or DOCX (15 MB maximum). Sources are untrusted document content. Inspect extraction completeness before use.</p>'
     if not project.synthetic:
         body += form(project, 0, 'upload', '<label>File<input type="file" name="file" accept=".txt,.pdf,.docx" required></label><label>Role<select name="role"><option value="tender">Tender</option><option value="knowledge">Company knowledge</option><option value="text_module">Reusable text module</option><option value="template">Corporate template (store only)</option></select></label><button>Upload and extract text</button>').replace('<form method=', '<form enctype="multipart/form-data" method=')
     else:
@@ -16,8 +24,9 @@ def documents_view(project, form):
     return body
 
 def checklist_view(project, form):
-    body = '<p>Candidates require human inspection. Structural validation cannot prove semantic correctness or complete obligation recovery. Evidence matching is unavailable.</p>'
+    body = '<p>Candidates require human inspection. Structural validation cannot prove semantic correctness or complete obligation recovery.</p>'
     if not project.synthetic:
+        body = evidence_entry(project) + body
         body += form(project, 1, 'extract', '<p>This sends current tender passages only to the configured, approved Requesty connection. Candidates are appended; repeat runs may add duplicates. Existing edits are preserved if a call fails.</p><button>Extract candidate requirements via configured provider</button>')
     sources = tender_passages(project)
     def editor(item=None):
@@ -50,5 +59,6 @@ def checklist_view(project, form):
         body += form(project, 1, 'delete_requirement', f'<input type="hidden" name="target" value="{h(item.id)}"><label>Reviewer<input name="reviewer" required></label><button>Delete requirement</button>') + '</article>'
     body += '<h3>Add a requirement manually</h3>' + editor()
     body += form(project, 1, 'review_checklist', '<p>Inspect the whole tender and checklist first. Reviewing does not guarantee every obligation was found.</p><label>Reviewer<input name="reviewer" required></label><button>Mark requirement checklist reviewed</button>')
-    body += '<button disabled>Match company evidence — unavailable</button>'
+    if project.synthetic:
+        body += '<button disabled>Match company evidence — unavailable for the synthetic sample</button>'
     return body
