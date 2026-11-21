@@ -48,6 +48,7 @@ class LexicalIndex:
         self.entries = {}
         self.neighbors = {}
         self.postings = defaultdict(list)
+        self.lengths = {}
         for reading in readings:
             if reading.status != 'Read':
                 continue
@@ -55,16 +56,23 @@ class LexicalIndex:
             for i, passage in enumerate(reading.passages):
                 self.entries[passage.id] = (reading.source, passage)
                 self.neighbors[passage.id] = ids[max(0, i-1):i+2]
-                for word, count in Counter(terms(passage.excerpt)).items():
+                counts = Counter(terms(passage.excerpt))
+                self.lengths[passage.id] = counts.total()
+                for word, count in counts.items():
                     self.postings[word].append((passage.id, count))
+        self.average_length = sum(self.lengths.values()) / max(1, len(self.entries)) or 1
 
     def search(self, query, limit=5):
+        """Score term postings with BM25 and keep passage IDs stable for the graph."""
         scores = Counter()
-        for word, weight in Counter(terms(query)).items():
+        size = len(self.entries)
+        for word in sorted(set(terms(query))):
             posting = self.postings.get(word, ())
-            rarity = math.log1p(len(self.entries) / (1 + len(posting)))
+            frequency = len(posting)
+            rarity = math.log1p((size - frequency + 0.5) / (frequency + 0.5))
             for pid, count in posting:
-                scores[pid] += rarity * min(weight, 3) * (1 + math.log(count))
+                length_penalty = 1.2 * (0.25 + 0.75 * self.lengths[pid] / self.average_length)
+                scores[pid] += rarity * count * 2.2 / (count + length_penalty)
         return sorted(scores, key=lambda pid: (-scores[pid], pid))[:limit]
 
     def citation(self, pid):
