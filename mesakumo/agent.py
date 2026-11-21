@@ -6,7 +6,7 @@ import fcntl
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .requirements import tender_passages, validate_candidates, invalidate_checklist
-from .models import DisabledModel
+from .models import DisabledModel, ModelUnavailable
 
 LIMIT = 48_000
 MAX_STEPS = 40
@@ -93,6 +93,13 @@ Use concise statements in German. You have at most 40 actions. If unable to cove
 '''
 
 
+def parse_action(raw):
+    # Claude may wrap JSON in one Markdown fence. Unwrap only that exact form;
+    # JSON decoding and tool/argument validation still apply afterwards.
+    fenced = re.fullmatch(r'\s*```(?:json)?[ \t]*\n(.*?)\n```\s*', raw, re.DOTALL)
+    return json.loads(fenced.group(1) if fenced else raw)
+
+
 def graph_for(project, rows, model, checkpoint, max_steps=MAX_STEPS):
     docs, passages, batches = sources(project, rows)
     def decide(state):
@@ -107,12 +114,19 @@ def graph_for(project, rows, model, checkpoint, max_steps=MAX_STEPS):
             raise ValueError('Prompt exceeds request limit including system overhead')
         try:
             raw = model.complete(prompt)
-            if len(raw.encode()) > 100_000: raise ValueError('Oversized action')
-            action = json.loads(raw)
-            if set(action) != {'tool', 'args'} or action['tool'] not in TOOLS or not isinstance(action['args'], dict):
-                raise ValueError('Unknown action')
+        except ModelUnavailable as exc:
+            # The provider boundary already removes credentials and response bodies.
+            raise ValueError('Requesty request failed: ' + str(exc)) from None
         except Exception:
-            raise ValueError('Model request failed or returned an invalid JSON action; explicit retry required') from None
+            raise ValueError('Model adapter failed before returning a response. Explicit retry required.') from None
+        if not isinstance(raw, str) or len(raw.encode()) > 100_000:
+            raise ValueError('Model action is empty, non-text or exceeds the response limit. Explicit retry required.')
+        try:
+            action = parse_action(raw)
+        except (ValueError, TypeError):
+            raise ValueError('Model returned invalid JSON instead of a tool action. Explicit retry required.') from None
+        if not isinstance(action, dict) or set(action) != {'tool', 'args'} or action['tool'] not in TOOLS or not isinstance(action['args'], dict):
+            raise ValueError('Model returned an unsupported tool action or invalid arguments. Explicit retry required.')
         return {'action': action, 'steps': state['steps'] + 1}
 
     def listing(state):

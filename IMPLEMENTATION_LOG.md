@@ -254,3 +254,173 @@ Manual check/launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.p
 Set REQUESTY_API_KEY privately as in the supplied guide, open page 1, choose a pack,
 retry a saved failure if present, and refresh to confirm restoration/no extra calls.
 Remaining blocker: Requesty gateway/model access returns HTTP 403. No Task 3 work.
+
+## 2026-11-21 — Diagnose and fix Requesty HTTP 403
+
+Found a local configuration bug, superseding the earlier gateway-access diagnosis:
+configure_team_one's regex accepted only alphanumeric/underscore/hyphen characters,
+truncating the actual key at a plus sign and dropping the remaining encoded value.
+Replaced regex extraction with shlex parsing of the guide's complete quoted export
+assignment. The full value (including +, / or =) reaches the SDK unchanged. Added a
+synthetic regression test for full-key preservation and explicit environment precedence.
+No credential values were printed, changed or copied into tracked files.
+
+The inherited process still has no REQUESTY_API_KEY. User's ignored .env.example
+contains an assignment, but the app does not load that file, and it has provider
+set to disabled and approval no. Left these private settings untouched. Corrected
+document fallback now provides working access without depending on that file.
+
+Live minimal Haiku probe now succeeds (normal stop). A second actual agent-prompt
+probe revealed a JSON Markdown fence around an otherwise valid action. Added exact
+single-fence unwrapping before existing strict JSON/tool/citation validation; no
+arbitrary explanatory text is accepted. Repeated live initial action probe PASS:
+list_tender_documents, offset 0. No tender contents sent in these checks. Native
+provider tool calls and full real-document extraction are still not verified.
+
+Changed: mesakumo/models.py, mesakumo/agent.py,
+tests/test_documents_requirements.py, tests/test_agent.py, README.md,
+PROJECT_STATUS.md, IMPLEMENTATION_LOG.md.
+
+Exact checks/results:
+- `.venv/bin/python -m unittest discover -s tests -v`: 33 PASS. Synthetic/scripted
+  tests include complete special-character keys, precedence, fenced actions,
+  malformed text rejection and Streamlit rerun/retry behavior.
+- `.venv/bin/python tests/http_smoke.py`: PASS legacy actual-loopback integration
+  with synthetic fixture, disabled provider, persistence and restart.
+- Live SDK minimal synthetic prompt using full document-loaded key: SUCCESS,
+  model bedrock/claude-haiku-4-5@eu-west-1, finish_reason stop.
+- Live RequestyModel.complete with real agent protocol and no source documents:
+  PASS initial list_tender_documents JSON action after exact fence unwrapping.
+- `git diff --check -- mesakumo/models.py mesakumo/agent.py tests/test_documents_requirements.py tests/test_agent.py README.md PROJECT_STATUS.md IMPLEMENTATION_LOG.md`: PASS.
+
+Restart Streamlit with `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
+Manual check: open page 1, click Retry failed extraction for an existing failure,
+inspect trace/coverage and refresh to confirm no new run. No later task implemented.
+Actual-document parser/scoping checks were not repeated for this configuration fix.
+
+## 2026-11-21 — Task 3: complete Tender Requirements review
+
+Inspected current code, git status and repository instructions before editing;
+no applicable AGENTS.md found. Preserved existing uncommitted Task 1/2/follow-up
+work and private participant/credential files. Reused domain requirements,
+save/delete/review helpers, checklist invalidation, SQLite project persistence
+and revision-based stale-write checks.
+
+Implemented page-1 saved checklist plus requirement editor: stable ID, statement,
+category, obligation level, exact constraint lines and selected source references.
+Reviewers can edit/add/remove with reviewer identity and human provenance. The
+source view includes filename, exact parser page/paragraph/line range, source
+version, passage ID and original excerpt. Only active buyer passages in the current
+phase are selectable/citable; internal partner guidance remains excluded. Gaps and
+unsupported/unreadable documents appear beside the checklist. Old rows default to
+Unspecified obligation level; default omission in fingerprints preserves legacy
+fingerprints. Explicit classification changes still invalidate approval.
+
+New ChecklistReview service persists immutable approval snapshots and exact UTF-8
+CSV bytes in checklist_approvals. CSV includes tender, phase, revision, reviewer,
+requirement IDs, edited fields, provenance and structured citations (source filename,
+location, passage/document/version IDs, original excerpts). CSV generation precedes
+mutation of stored state; approved project snapshot and CSV commit in one transaction.
+Generation/SQLite failures leave no new approval; UI explains retry recovery.
+Repeated submissions resolve to the same current approval; stale writes are rejected.
+Snapshot/fingerprint/source-snapshot checks plus CSV integrity gate page 2.
+
+Added Approve and Save with explicit gap/completeness acknowledgment and current
+CSV download. Individual requirement forms must be saved before approval; the saved
+table is the exported truth. Gaps may be explicitly acknowledged without discarding
+citation validation. Existing legacy review defaults still block failed sources.
+Checklist approval is distinct from final proposal approval. Evidence Matching
+receives/displays the exact approved checklist revision; otherwise it shows a locked
+state. Editing invalidates current progression; historical approval/CSV records remain
+stored. Evidence retrieval, draft generation and corporate export remain unimplemented.
+
+Changed Task 3 files: mesakumo/domain.py, mesakumo/requirements.py,
+mesakumo/checklist.py, mesakumo/ui/checklist.py, mesakumo/streamlit_app.py,
+tests/test_checklist.py, README.md, PROJECT_STATUS.md, IMPLEMENTATION_LOG.md.
+No new dependency or credential changes.
+
+Exact checks and results:
+- `.venv/bin/python -m unittest discover -s tests -v`: 39 PASS (33 prior + 6 review
+  tests). Initial Streamlit compilation typo was fixed before final passing runs.
+- `.venv/bin/python -m unittest discover -s tests -p test_checklist.py -v`: PASS
+  review acceptance; final test file includes six checks. Synthetic Streamlit flow
+  edits one candidate, adds a cited manual requirement, removes another, injects
+  CSV generation failure, confirms no approval/download, retries successfully,
+  retrieves bytes registered at the actual Streamlit download URL and compares to
+  the SQLite CSV and approved rows. Fresh AppTest session restores approval/download;
+  page 2 receives the approved revision; a saved edit disables progression and locks
+  direct page-2 access. Backend tests cover idempotence, old revisions, source scope,
+  preserved legacy obligation/fingerprint defaults, CSV generation failure and SQLite
+  trigger-induced transaction rollback/recovery. No model/key required.
+- `.venv/bin/python tests/http_smoke.py`: PASS preserved CLI/actual-loopback HTTP,
+  synthetic upload, manual review, disabled call, process restart/reopen.
+- `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.headless true --server.address 127.0.0.1 --server.port 8511 --browser.gatherUsageStats false`:
+  successful headless launch; test server stopped afterward. UI checks use AppTest,
+  not visual browser QA.
+- Local actual-document checks used packs(), open_selection(), sources() and
+  ChecklistReview with temporary SQLite across Ausschreibung 1, Ausschreibung 2 -
+  mit Partner, and Ausschreibung 3 participation/offer: PASS current source citation
+  mapping, UTF-8 CSV, atomic approval and fresh-store reopen. Checklist rows were
+  synthetic linkage checks citing actual passages; not extraction accuracy claims.
+  No participant originals modified; temporary verification DB removed.
+- `git diff --check`: PASS.
+
+No live Requesty calls were made for Task 3. Prior corrected-key Haiku completion
+and initial JSON action remain the only live provider verifications; full actual
+tender extraction/review accuracy remains unverified. Remaining limits: manual
+completeness review is required; legacy unsupported formats/OCR gaps remain; CSV
+uses JSON arrays in citation/constraint cells; historical snapshots have no separate
+history browser. No evidence retrieval or later-task work implemented.
+
+Launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
+Manual test: edit one row, add a cited manual row, remove another, Approve and Save,
+download and compare CSV, restart/reopen, inspect page-2 approved revision, then
+save another edit and confirm fresh approval is required. Stopped after Task 3.
+
+## 2026-11-21 — Follow-up: diagnose saved extraction error and clean page 1
+
+Inspected user screenshot, current code and git status. Screenshot message originates
+in agent.py's broad decide() exception handler, which conflated provider errors with
+malformed/unsupported JSON. Local SQLite has two saved failed attempts at zero actions;
+these old records contain no specific underlying exception. Their root cause cannot
+be reconstructed. Refresh restores saved failures by design. Kept records intact.
+
+Split diagnostics into sanitized Requesty failure, adapter failure, invalid JSON and
+unsupported action cases. No raw model output, keys or private document contents are
+included in diagnostics. A fresh live initial JSON-action probe passes with the current
+corrected key, using only the protocol/minimal synthetic state and no tender contents.
+This does not establish successful full-document extraction or identify the exact old
+failure. UI explains old generic failures and directs explicit retry.
+
+Cleaned Tender Requirements: removed the initial giant inventory, hundreds of source
+expanders and duplicate progress/coverage tables; put the checklist first, full width.
+Explicit schema keeps columns visible on an empty table (previous [] data had none).
+Statement is first; readable source filenames/locations replace raw IDs in the summary.
+Stable IDs remain in the table/editor. Collapsed edit/add, original-source, coverage,
+document inventory and trace sections preserve all functionality without clutter.
+Removed the narrow side column and redundant internal IDs/path text from the main view.
+Kept review revision, approval/export failure recovery and page-2 gates unchanged.
+
+Changed: mesakumo/agent.py, mesakumo/streamlit_app.py, mesakumo/ui/checklist.py,
+tests/test_agent.py, tests/test_discovery.py, README.md, PROJECT_STATUS.md,
+IMPLEMENTATION_LOG.md. Preserved prior uncommitted work; no participant/credential edits.
+
+Checks/results:
+- `.venv/bin/python -m unittest discover -s tests -v`: 40 PASS. New scripted diagnostic
+  test distinguishes provider HTTP 403 from invalid JSON. Existing review CSV/restart/
+  invalidation acceptance passes. Empty-page AppTest asserts six explicit checklist
+  columns and a bounded number of expanders. These are synthetic/local tests.
+- `.venv/bin/python tests/http_smoke.py`: PASS preserved synthetic actual-loopback
+  legacy workflow, upload/review, disabled call, restart/reopen.
+- `MESAKUMO_LLM_PROVIDER=disabled .venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.headless true --server.address 127.0.0.1 --server.port 8511 --browser.gatherUsageStats false`:
+  launch succeeds. Attempted visual browser inspection with CUA; concrete blocker:
+  “The browser access host is unavailable.” No visual screenshot QA claimed. Test
+  server stopped after verification.
+- Live RequestyModel.complete(PROTOCOL + minimal synthetic state), parse_action():
+  PASS list_tender_documents offset 0. No tender text sent; full extraction not run.
+- `git diff --check`: PASS.
+
+Launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
+Manual check: restart, open page 1, confirm checklist headers appear immediately,
+expand edit/source/details as needed, and use Retry failed extraction to replace a
+saved failure with a fresh attempt/specific diagnostic. No later-task implementation.

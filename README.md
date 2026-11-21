@@ -1,3 +1,134 @@
+# Start extraction explicitly (21 November 2026)
+
+Select a tender pack (and phase where available), then click **Start extraction**.
+Opening the app, switching tenders and editing the checklist do not call the model.
+Saved failures show **Retry failed extraction**; click it to run a fresh attempt
+with the current key loader and detailed diagnostics. Completed/partial results
+remain available without running again. A disabled provider shows a configuration
+message only when extraction is requested.
+
+The screenshot's generic error is a saved historical failure; its original cause
+was not recorded. It remains visible until explicitly retried. Existing work is
+preserved, and a full live tender extraction has not been verified by this change.
+
+---
+
+# Checklist layout and failure diagnostics (21 November 2026)
+
+Page 1 now opens on a full-width requirements table with explicit column headers,
+even when extraction has produced no rows. Statements come first; source references
+show filenames and locations. Edit/add forms, source excerpts, document inventory,
+coverage details and execution traces are collapsed until needed. Approval and
+CSV download remain beneath the checklist.
+
+The old message “Model request failed or returned an invalid JSON action” came from
+a catch-all in agent.py. Existing saved failures cannot reveal their original cause;
+refreshing restores them without another request. The updated handler distinguishes
+Requesty errors, malformed JSON and unsupported actions. Open **Why extraction
+stopped** for details and use **Retry failed extraction** for a fresh attempt.
+
+A fresh minimal live first-action check passes using the corrected key. It does not
+verify a full tender extraction. All 40 tests and the legacy HTTP smoke pass. Browser
+access was unavailable, so visual QA could not be completed; Streamlit AppTest covers
+the table headers, review flow, approval/download and retry behavior.
+
+Launch and manual check:
+
+```sh
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+Restart the app, open Tender Requirements, confirm the checklist headers are visible,
+expand only the information you need, then retry a saved failure to see a fresh
+specific diagnostic. Existing projects, failed runs and approvals are preserved.
+
+---
+
+# Task 3: Tender Requirements review (21 November 2026)
+
+```sh
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+Open http://127.0.0.1:8501. Page 1 now supports the complete checklist review:
+
+1. Select a tender/phase. Review extraction gaps beside the saved checklist.
+2. Choose a stable requirement ID in **Requirement to edit**. Edit its statement,
+   category, obligation level, exact constraints and source references. Enter a
+   reviewer and human provenance note, then **Save requirement**. Select **Add new
+   requirement** for a manual row, or use **Remove requirement** for an existing row.
+3. Use **Original source view** to inspect the filename, page/paragraph/line range,
+   source version and unchanged excerpt. Only current buyer passages in the selected
+   phase can be cited; internal partner guidance is excluded.
+4. Save each individual edit first. Enter **Approving reviewer**, acknowledge gaps
+   and manual completeness review, then choose **Approve and Save**. A download
+   appears only after the approved snapshot and CSV have both committed to SQLite.
+5. Download the UTF-8 CSV and compare its rows to the saved checklist. It contains
+   tender, phase, approved revision, stable IDs, edited fields, human provenance
+   and JSON arrays for exact constraints and complete citations (filename, location,
+   passage/version IDs, original excerpt).
+6. **Continue to Evidence Matching** becomes available. Page 2 displays the exact
+   approved revision/snapshot it received; evidence retrieval is a later task.
+
+Approval and CSV bytes survive restarts. Saving any edit/add/remove or changing
+sources invalidates the current handoff. Page 2 blocks access until fresh approval;
+old snapshots stay retained in SQLite. Approval of the checklist is separate from
+final proposal approval. Unknown obligation levels default to **Unspecified**;
+reviewers should classify them from the source rather than assuming mandatory.
+
+CSV generation happens before the transaction. If generation or saving fails,
+no approval is committed: the page shows an error and **Approve and Save** can be
+retried. Repeated approval submissions return the existing snapshot. Stale writes
+from another tab are rejected. Gaps, including unsupported files, require explicit
+acknowledgment; approval does not certify that extraction found every obligation.
+
+Manual acceptance: edit one candidate, add a cited manual row, remove another,
+approve and download. Compare IDs, statements, constraints and citations with the
+table. Restart and check the download and received page-2 revision remain. Return
+to page 1, save another edit and confirm Evidence Matching is locked again.
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p test_checklist.py -v
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python tests/http_smoke.py
+```
+
+Task 3 verification: 39 automated tests pass, including Streamlit acceptance and
+exact download-payload comparison, CSV failure/recovery, database rollback, restart,
+revision invalidation and stale writes. Legacy HTTP smoke passes. Local actual-pack
+checks confirm source-linked CSV/approval/reopen across all four pack/phase selections
+using synthetic checklist rows; no extraction accuracy is claimed. No new live
+Requesty calls were made for Task 3. No visual browser QA performed.
+
+The sections below describe previous milestones and historical verification.
+Task 3 supersedes earlier statements that Streamlit checklist editing is unavailable.
+
+---
+
+# Requesty key-loader fix (21 November 2026)
+
+The previous HTTP 403 was caused by the local document loader truncating the key
+at `+`/`=` characters. The loader now reads the complete quoted
+`export REQUESTY_API_KEY=...` assignment from the Team 1 guide. A live Haiku request
+now succeeds. Earlier 403/access-blocker statements below are historical and
+superseded by this finding. The live initial agent action also passes after unwrapping a single JSON Markdown fence; strict action and citation validation remain. Full real-tender extraction has not been verified.
+
+The populated `.env.example` is ignored and is **not loaded** by the app; it also
+still contains disabled-provider/approval settings. The corrected document fallback
+works without loading that file. Alternatively export REQUESTY_API_KEY in the same
+terminal used to launch Streamlit. Restart any running Streamlit process after
+this fix, then click **Retry failed extraction** for a saved failure.
+
+```sh
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+33 offline tests and the legacy HTTP smoke pass, including a full-key regression
+check. Live probes use only synthetic prompts, never tender contents.
+
+---
+
 # Simplified Requesty setup (21 November 2026)
 
 The adapter now follows the Team 1 document's OpenAI SDK example:

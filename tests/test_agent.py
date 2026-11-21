@@ -82,7 +82,15 @@ class AgentTests(unittest.TestCase):
 
     def test_streamlit_no_calls_on_reopen(self):
         from streamlit.testing.v1 import AppTest
-        model=Scripted(self.sequence())
+        class BusyModel(Scripted):
+            def complete(inner, prompt):
+                import streamlit as st
+                self.assertTrue(st.session_state.extraction_busy)
+                return super().complete(prompt)
+        model=BusyModel(self.sequence())
+        other=Path(self.tmp.name)/'Ausschreibung 3'
+        other.mkdir()
+        (other/'specification.txt').write_text('A separate tender.')
         # Use actual UI-selected project created from this fixture; keep SQLite isolated.
         with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_DATA_DIR':'data/test_agent_ui','MESAKUMO_LLM_PROVIDER':'disabled'}):
             with patch('mesakumo.models.configured_model',return_value=model):
@@ -91,7 +99,18 @@ class AgentTests(unittest.TestCase):
                 shutil.rmtree('data/test_agent_ui',ignore_errors=True)
                 app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
+                self.assertEqual(model.calls,0)
+                app.run(); self.assertEqual(model.calls,0)
+                tender=next(w for w in app.selectbox if w.label=='Tender pack')
+                tender.select('Ausschreibung 3').run()
+                self.assertFalse(app.exception); self.assertEqual(model.calls,0)
+                next(w for w in app.selectbox if w.label=='Tender pack').select('Ausschreibung 2 - mit Partner').run()
+                self.assertFalse(app.exception); self.assertEqual(model.calls,0)
+                next(b for b in app.button if b.label=='Start extraction').click().run()
+                self.assertFalse(app.exception)
                 calls=model.calls
+                self.assertFalse(app.session_state['extraction_busy'])
+                self.assertFalse(next(w for w in app.selectbox if w.label=='Tender pack').disabled)
                 self.assertEqual(calls,4)
                 app.run();self.assertFalse(app.exception);self.assertEqual(model.calls,calls)
 
@@ -137,9 +156,38 @@ class AgentTests(unittest.TestCase):
         with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_DATA_DIR':'data/test_agent_retry_ui','MESAKUMO_LLM_PROVIDER':'disabled'}), patch('mesakumo.models.configured_model',return_value=model):
             shutil.rmtree('data/test_agent_retry_ui',ignore_errors=True)
             app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+            self.assertFalse(app.exception); self.assertEqual(model.calls,0)
+            next(b for b in app.button if b.label=='Start extraction').click().run()
             self.assertFalse(app.exception); self.assertEqual(model.calls,1)
+            self.assertFalse(app.session_state['extraction_busy'])
+            self.assertFalse(next(w for w in app.radio if w.label=='Page').disabled)
             app.run();self.assertEqual(model.calls,1)
             button=next(b for b in app.button if b.label=='Retry failed extraction')
             button.click().run()
             self.assertFalse(app.exception);self.assertEqual(model.calls,5)
             app.run();self.assertEqual(model.calls,5)
+
+    def test_fenced_json_action_keeps_validation(self):
+        from mesakumo.agent import parse_action
+        raw = json.dumps(action('list_tender_documents',offset=0))
+        self.assertEqual(parse_action('```json\n'+raw+'\n```'),json.loads(raw))
+        with self.assertRaises(ValueError): parse_action('Explanation: '+raw)
+        class FencedModel(Scripted):
+            def complete(inner,prompt): return '```json\n'+super().complete(prompt)+'\n```'
+        result=self.runs.ensure(self.project,self.rows,FencedModel(self.sequence()))
+        self.assertEqual(result['status'],'completed')
+
+    def test_failure_diagnostics_distinguish_provider_and_json(self):
+        from mesakumo.models import ModelUnavailable
+        class ProviderFailure:
+            def complete(inner,prompt):
+                raise ModelUnavailable('Requesty HTTP 403. Check access, model and quota. No candidates saved.')
+        result=self.runs.ensure(self.project,self.rows,ProviderFailure())
+        self.assertIn('Requesty request failed: Requesty HTTP 403',result['error'])
+        self.assertEqual(result['steps'],0)
+        class InvalidJSON:
+            def complete(inner,prompt): return 'This is not an action'
+        result=self.runs.ensure(self.project,self.rows,InvalidJSON(),retry=True)
+        self.assertIn('invalid JSON',result['error'])
+        self.assertNotIn('HTTP 403',result['error'])
+        self.assertEqual(result['attempt'],2)

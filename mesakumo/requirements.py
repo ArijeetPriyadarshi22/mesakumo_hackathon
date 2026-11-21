@@ -94,18 +94,18 @@ def delete_requirement(project, target, reviewer):
     project.decisions.append(ReviewDecision(target, project.revision, project.fingerprint(), reviewer,
         datetime.now(timezone.utc).isoformat(), 'Requirement deleted'))
 
-def check_reviewable(project):
+def check_reviewable(project, allow_source_gaps=False):
     current = {p.id for p in tender_passages(project)}
     latest = {d.id: d for d in project.documents if d.role == 'tender'}
-    if any(d.error for d in latest.values()):
+    if not allow_source_gaps and any(d.error for d in latest.values()):
         raise ValueError('Replace failed tender versions before recording checklist review.')
     if any(not r.source_ids or any(i not in current for i in r.source_ids) for r in project.requirements):
         raise ValueError('Requirements reference missing or historical tender passages. Correct their sources before review.')
 
-def review_checklist(project, reviewer):
+def review_checklist(project, reviewer, allow_source_gaps=False):
     if not reviewer.strip() or not project.requirements:
         raise ValueError('A nonempty checklist and reviewer label are required.')
-    check_reviewable(project)
+    check_reviewable(project, allow_source_gaps=allow_source_gaps)
     for item in project.requirements:
         item.reviewed = True
     invalidate(project)

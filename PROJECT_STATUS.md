@@ -1,42 +1,48 @@
 # Current implementation state
 
-Updated: 21 November 2026. Task 2 implemented: LangGraph requirements agent wired
-into Tender Requirements. Stop after Task 2; later Streamlit pages remain status pages.
+Updated: 21 November 2026. Task 3 complete: Tender Requirements review, approval
+and revision-bound UTF-8 CSV. Stop after Task 3; evidence retrieval is not implemented.
 
 Launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`
-Legacy launch remains `.venv/bin/python -m mesakumo` (run separately).
+Existing CLI remains `.venv/bin/python -m mesakumo` (run separately).
 
-Agent-selected JSON actions route through LangGraph to three scoped application
-tools using the existing Requesty text adapter. Bounded passage reads, citation
-validation against actual reads, processed batch accounting, zero-candidate
-submissions, conservative duplicate merging, possible contradiction flags, per-document
-progress, checklist, trace and coverage gaps are implemented. SQLite snapshots and
-process locks prevent rerun/tab duplicates; failed/interrupted runs require explicit
-retry. Internal partner guidance is excluded. Team 1 local credentials load in
-memory only unless provider configuration is already set; disabled mode is supported.
+Page 1: stable IDs, editable statement/category/obligation level/constraints/citations,
+manual additions with human provenance, removals, original filename/location/excerpt
+view, adjacent extraction gaps. Only current phase buyer sources can be cited.
+Approve and Save uses existing checklist review/invalidation and SQLite stale-write
+checks; approved snapshot and CSV bytes commit together. CSV failures save no approval
+and can be retried. Approvals are idempotent and tied to revision, fingerprint and
+source snapshot. Restart restores approval/download. Edits invalidate the handoff.
+Page 2 receives the exact approved revision and stays locked without current approval.
 
-Verification: 31 automated tests pass including scripted reference-following,
-attachment citation, invalid citations, partial coverage, zero candidates, locks,
-interruption/retry, long passage bounds and Streamlit reopen without model calls.
-Legacy HTTP smoke passes; Streamlit starts on loopback. Actual tender source scoping
-and bounded fragmentation checked locally for all four pack/phase selections.
+Checks: 40 automated tests pass. Synthetic Streamlit acceptance edits/adds/removes,
+compares registered download bytes to CSV/saved rows, simulates CSV failure/recovery,
+reopens a fresh app session and confirms edit invalidation. Backend tests cover stale
+writes, citation scope, idempotence and database failure rollback. Legacy HTTP smoke
+passes. Headless Streamlit starts on loopback. Local actual-document linkage checks
+pass for all three packs/four phase selections using synthetic test rows and temporary
+SQLite storage; not an extraction accuracy evaluation.
 
-Live blocker: Requesty EU returns HTTP 403 for both Haiku and Sonnet IDs in Team 1
-access document. No live model-generated action or extraction result verified.
-Initial Python CA trust issue fixed by supplementing system roots with certifi.
-No native provider tool support claimed: implementation uses JSON text actions.
+No live Requesty calls needed/performed for Task 3. Prior key-truncation fix established
+successful Haiku completion and initial JSON action only; full real-document extraction
+remains unverified. Existing Requesty adapter/agent behavior preserved. No visual browser
+QA performed. No OCR/XLSX/AIDF parser, evidence retrieval, drafting or corporate export.
 
-Limits: matching wording/classification/constraints merges conservatively;
-paraphrases remain separate. Conflict detection is heuristic, human review required.
-No OCR/XLSX/AIDF parsing added; unsupported sources count as coverage gaps. Partial
-runs restore as-is. Reading/processing coverage does not establish completeness.
-No visual browser QA. Participant materials remain local/ignored; existing staged
-index removals and prior Git history are preserved. No Task 3 work performed.
+Obligation level defaults to Unspecified for legacy records; fingerprints remain
+compatible when that optional field has no explicit value. Partial/unsupported source
+gaps can be acknowledged during checklist approval, but never bypass citation validation.
+Checklist approval is distinct from final proposal approval. Save individual form edits
+before approving; only the displayed saved table is exported. Earlier approvals/CSVs
+are retained in SQLite; UI downloads the current approved snapshot.
+
+Existing uncommitted work, participant-material privacy/ignore rules and credentials
+are preserved. No Task 4 work performed.
 
 
-21 November 2026 adapter simplification: RequestyModel now uses the official
-OpenAI SDK as shown in the Team 1 guide. REQUESTY_API_KEY is supported directly;
-local document fallback and legacy configuration remain. SDK owns auth/JSON/retries;
-EU endpoint restriction, redirect rejection and response validation retained.
-Response size is checked after SDK decoding. 31 tests and HTTP smoke pass; live
-SDK probe still HTTP 403. No later milestone implemented.
+21 November 2026 UI/diagnostics follow-up: page 1 puts a full-width checklist first,
+with explicit empty-table columns and readable source labels. Supporting forms,
+inventory, source text, coverage and traces are collapsed. Agent errors now distinguish
+provider failures from invalid JSON/actions; historical generic errors retain an
+explanation of missing diagnostic detail. Existing saved failures are not deleted
+or automatically retried. Minimal live first-action check PASS; full extraction still
+unverified. 40 tests and HTTP smoke PASS. Browser host unavailable; visual QA blocked.
