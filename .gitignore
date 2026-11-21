@@ -10,3 +10,6 @@ data/
 private_documents/
 exports/
 *.sqlite3*
+
+mesakumo_Input*/
+mesakumo_Input für Teilnehmer/
