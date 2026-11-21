@@ -3,7 +3,9 @@ import json
 import os
 import time
 from typing import Protocol
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
+import ssl
+import certifi
 from urllib.error import HTTPError, URLError
 
 class ModelUnavailable(RuntimeError):
@@ -28,7 +30,9 @@ class RequestyModel:
             raise ModelUnavailable('Set the Mesakumo-approved Claude model ID and API key.')
         self.url = base_url.rstrip('/') + '/chat/completions'
         self.model, self.key = model, api_key
-        self.opener = opener or build_opener(NoRedirect())
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=certifi.where())
+        self.opener = opener or build_opener(NoRedirect(), HTTPSHandler(context=context))
         self.sleep = sleep
 
     def complete(self, prompt):
@@ -66,3 +70,21 @@ def configured_model():
         return DisabledModel()
     return RequestyModel(os.environ.get('MESAKUMO_LLM_BASE_URL', ''),
                         os.environ.get('MESAKUMO_LLM_MODEL', ''), os.environ.get('MESAKUMO_LLM_API_KEY', ''))
+
+
+def configure_team_one():
+    """Load authorized local Team 1 access in memory; never copy keys into git."""
+    from .discovery import participant_directory
+    import re
+    if os.environ.get('MESAKUMO_LLM_PROVIDER'):
+        return
+    path = participant_directory() / '99 LLM keys/hackathon-team-1-llm-zugang.md'
+    if not path.is_file():
+        return
+    content = path.read_text(encoding='utf-8')
+    keys = re.findall(r'sk-[A-Za-z0-9_-]+', content)
+    if not keys:
+        return
+    os.environ.update(MESAKUMO_LLM_PROVIDER='requesty', MESAKUMO_LLM_APPROVED='yes',
+        MESAKUMO_LLM_BASE_URL='https://router.eu.requesty.ai/v1',
+        MESAKUMO_LLM_MODEL='bedrock/claude-haiku-4-5@eu-west-1', MESAKUMO_LLM_API_KEY=keys[0])

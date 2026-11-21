@@ -3,7 +3,7 @@ name = "mesakumo-workspace"
 version = "0.1.0"
 description = "Local tender-to-proposal foundation"
 requires-python = ">=3.11"
-dependencies = ["pypdf==6.21.4"]
+dependencies = ["pypdf==6.21.4", "streamlit==1.51.0", "langgraph==1.0.3", "certifi==2026.10.23"]
 
 [tool.unittest]
 start-directory = "tests"

@@ -1,3 +1,113 @@
+# Task 2: LangGraph requirements agent (21 November 2026)
+
+Launch from the repository root:
+
+```sh
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+Tender Requirements discovers the local pack and phase, then starts one extraction
+when a model is configured. Reopening or rerunning restores the persisted run.
+Failed runs require **Retry failed extraction**; interrupted processes are marked
+failed after the run lock is released. Runs are isolated by project and source
+snapshot, so changed sources start a new run. Completed/partial runs stay saved.
+
+As authorized for Task 2, the app loads the key from the local participant file
+`99 LLM keys/hackathon-team-1-llm-zugang.md` into process memory when no provider
+is explicitly set. It uses `bedrock/claude-haiku-4-5@eu-west-1` and the Requesty EU
+endpoint. Explicit environment configuration takes precedence; set
+`MESAKUMO_LLM_PROVIDER=disabled` for local discovery without extraction.
+Keys are never written into code, traces or SQLite. Participant files stay ignored.
+
+The existing Requesty adapter supplies text responses. This implementation uses
+three application tools via a validated JSON action protocol, **not native provider
+tool calling**. LangGraph StateGraph conditionally routes the agent-selected action:
+`list_tender_documents`, `read_tender_passages`, or `submit_requirement_candidates`.
+Reads accept known document or passage IDs with an offset. Each returned batch
+includes IDs and a next offset; the model chooses follow-up reads, including
+referenced attachments. Internal partner guidance is excluded from the agent.
+
+Requests stay below 48 KB including a 1 KB system overhead reserve. Long passages
+are fragmented without changing citation IDs; a read returns at most about 14 KB
+of serialized source data. All fragments remain visible in coverage accounting.
+A run allows at most 40 model actions (the adapter may retry transport failures).
+Submissions may contain zero candidates. Citations and processed batches must
+have been read in the selected phase. Conservative equivalence merges matching
+wording/classification/constraints and unions citations; paraphrases are kept for
+human review. Similar differing wording is flagged as a possible conflict, not
+an established contradiction. Neither coverage nor validation proves accuracy.
+
+SQLite stores actions, processed/read batches, candidates, failures and coverage.
+An OS file lock prevents simultaneous runs across tabs/processes. Progress by
+document, a sourced candidate checklist, coverage gaps and an execution trace
+appear on page 1. Manual checklist editing/review stays available in the legacy
+CLI interface. Other Streamlit pages remain status pages.
+
+Manual test: open page 1 and select a pack/phase. Observe the extraction status
+and document coverage. If gateway access fails, refresh: no new run should start.
+Click Retry failed extraction to make one new attempt. After a successful run,
+expand a candidate to inspect its cited passages; refresh and confirm the same
+trace and checklist. Change pack/phase and confirm a separate project/run.
+
+Offline acceptance (no key needed):
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p test_agent.py -v
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python tests/http_smoke.py
+```
+
+Live verification: both approved models returned HTTP 403 through Requesty.
+No live extraction or native tool support is verified. Initial TLS trust failure
+was fixed by supplementing system CA roots with certifi, retaining verification.
+Graph construction follows the official [LangGraph StateGraph reference](https://reference.langchain.com/python/langgraph/graph/state/StateGraph).
+
+The sections below retain Task 1 and legacy workflow details.
+
+---
+
+# Task 1: Streamlit local tender discovery (21 November 2026)
+
+```sh
+cd /Users/arijeet/Documents/Mesakumo_hackathon
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+Open http://127.0.0.1:8501. Tender Requirements is the landing page. Use the
+sidebar to choose one of the three top-level Ausschreibung packs, inspect roles,
+reading statuses and extracted passages, and rescan. For pack 3 choose participation
+or offer; offer adds ZIP members. Identical bytes within a phase share one source
+and aliases remain visible. Archives are containers, not counted sources.
+No upload or model configuration is required and discovery makes no model calls.
+The other three pages state their implementation status.
+
+Set `MESAKUMO_PARTICIPANT_DIR` to an external participant directory if needed;
+default is the local `mesakumo_Input*` directory. Discovery excludes examples,
+company references and keys. CSV roles seed actual filesystem discovery; missing
+CSV classifications are visible. The AIDF is a buyer submission form, its PDF is
+the readable schedule, and Bearbeitungshinweis.txt is internal guidance (stored
+as knowledge, excluded from tender requirement extraction).
+
+Manual test: switch through all packs, inspect the AIDF and guidance roles, select
+both pack 3 phases and find the ZIP aliases. Click Rescan and reopen selections;
+project IDs and distinct source counts must stay unchanged. Navigate all four pages.
+
+The existing `.venv/bin/python -m mesakumo` launch and projects are preserved;
+run it separately on the same default port. Legacy workflow instructions below
+apply to that interface. Discovery uses separate stable project IDs and the same
+SQLite store. Originals stay in the participant directory; parsed passages persist
+in ignored local data. Participant files were removed from the Git index while
+kept on disk; earlier Git history still contains them and has not been rewritten.
+
+Task 1 checks: 19 unittest tests pass, legacy HTTP smoke passes; real packs were
+checked locally with networking blocked. No live Requesty call was made.
+Unsupported XLSX/AIDF and conservative PDF failures remain visible; no OCR added.
+Source changes retain document versions; renamed files have new source identities.
+
+---
+
 # Mesakumo tender-to-proposal workspace
 
 Local single-user InnovateU prototype. Documents → Requirements is implemented;
@@ -23,9 +133,9 @@ project to resume. No live model is required for upload or manual review.
 .venv/bin/python tests/http_smoke.py
 ```
 
-The app uses server-rendered HTML on Python's loopback HTTP server, typed dataclasses
+The legacy app uses server-rendered HTML on Python's loopback HTTP server, typed dataclasses
 and SQLite. Retaining the existing UI preserves tested workflow behaviour and
-avoids a Streamlit rewrite. The only dependency is pypdf 6.21.4. DOCX processing
+avoids a Streamlit rewrite. The legacy parser uses pypdf 6.21.4; the new shell also requires Streamlit 1.51.0. DOCX processing
 uses bounded ZIP/XML reading from Python's standard library.
 
 ## Use the Documents → Requirements workflow
@@ -104,7 +214,7 @@ version. Failed uploads remain visible. There is no file-removal UI yet.
 `MESAKUMO_DATA_DIR` optionally selects a data directory within the project root;
 `MESAKUMO_PORT` defaults to 8501. Relative data paths resolve against this root.
 Back up the entire data directory while stopped. Data, private documents, exports,
-virtual environments and secrets are Git-ignored. No Git repository exists yet.
+virtual environments and secrets are Git-ignored. A Git repository exists.
 Review staged files before any future commit.
 
 | Module | Responsibility |
@@ -135,7 +245,7 @@ No OCR, legacy `.doc`, layout-preserving tables, DOCX headers/footers/text boxes
 image extraction, automatic DOCX list numbering or automatic completeness checks. A PDF with an empty page is
 conservatively rejected, including possibly intentional blank pages. Textual
 pages containing image-only obligations still need manual inspection. Templates
-are retained but not parsed or rendered; no corporate template has been supplied.
+are retained but not parsed or rendered; the supplied corporate template is outside this milestone.
 No evidence matching, proposal generation, template export or submission is done.
 
 Next: obtain permitted tender/model/template inputs, perform and inspect one live
