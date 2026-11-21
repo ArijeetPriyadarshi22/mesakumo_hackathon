@@ -12,6 +12,7 @@ from .documents import LocalProcessor, MAX_FILE_BYTES
 from .workflow import invalidate
 
 ROOT = Path(__file__).resolve().parent.parent
+PARSER_VERSION = 'formats-v2'
 
 def participant_directory():
     configured = os.environ.get('MESAKUMO_PARTICIPANT_DIR')
@@ -79,11 +80,16 @@ def open_selection(store, pack, phase):
         seen[version] = doc_id
         row['source_id'] = doc_id
         doc = next((d for d in project.documents if d.id == doc_id and d.version == version), None)
+        if doc is not None and doc.parser_version != PARSER_VERSION:
+            project.passages = [p for p in project.passages if not (p.document_id == doc_id and p.document_version == version)]
+            project.documents.remove(doc)
+            doc = None
         if doc is None:
             doc = Document(doc_id, row['path'], 'knowledge' if row['role'] == 'Internal hackathon guidance' else 'tender', version=version)
+            doc.parser_version = PARSER_VERSION
             if row['error']:
                 doc.status, doc.error = 'Unreadable', row['error']
-            elif suffix not in ('.txt', '.pdf', '.docx'):
+            elif suffix not in ('.txt', '.pdf', '.docx', '.xlsx', '.aidf'):
                 doc.status = 'Unsupported format — not read'
             else:
                 try:

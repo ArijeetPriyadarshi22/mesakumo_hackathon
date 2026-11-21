@@ -36,7 +36,7 @@ def make_csv(project, rows, reviewer):
     tender, separator, phase = project.name.rpartition(' · ')
     if not separator: tender, phase = project.name, project.scope
     fields = ['project_id', 'tender', 'phase', 'approved_revision', 'reviewer', 'requirement_id',
-              'statement', 'category', 'obligation_level', 'exact_constraints', 'source_references', 'human_provenance']
+              'requirement', 'category', 'obligation_level', 'exact_constraints', 'source_references', 'human_provenance']
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     for r in project.requirements:
@@ -45,7 +45,7 @@ def make_csv(project, rows, reviewer):
             'original_excerpt': lookup[sid].excerpt, 'document_version':lookup[sid].document_version} for sid in r.source_ids]
         writer.writerow(dict(project_id=project.id, tender=tender, phase=phase,
             approved_revision=project.revision, reviewer=reviewer, requirement_id=r.id,
-            statement=r.text, category=r.kind, obligation_level=r.obligation_level,
+            requirement=r.text, category=r.kind, obligation_level=r.obligation_level,
             exact_constraints=json.dumps(r.constraints, ensure_ascii=False),
             source_references=json.dumps(references, ensure_ascii=False), human_provenance=r.provenance))
     return output.getvalue().encode('utf-8')
@@ -68,6 +68,13 @@ class ChecklistReview:
             data = bytes(row[3])
             if not data or hashlib.sha256(data).hexdigest()!=row[4]:
                 raise ValueError('Saved CSV integrity check failed. Restore the database backup; progression is blocked.')
+            # Normalize older saved downloads without changing their approved content.
+            records = list(csv.reader(io.StringIO(data.decode('utf-8'), newline='')))
+            if records and 'statement' in records[0] and 'requirement' not in records[0]:
+                records[0][records[0].index('statement')] = 'requirement'
+                output = io.StringIO(newline='')
+                csv.writer(output).writerows(records)
+                data = output.getvalue().encode('utf-8')
             return {**json.loads(row[2]), 'csv':data}
         return None
 

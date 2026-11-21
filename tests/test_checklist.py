@@ -37,7 +37,7 @@ class ChecklistTests(unittest.TestCase):
         current=self.store.load(self.pid)
         self.assertEqual({r['requirement_id'] for r in table},{self.first,manual})
         for row,r in zip(table,current.requirements):
-            self.assertEqual(row['statement'],r.text)
+            self.assertEqual(row['requirement'],r.text)
             self.assertEqual(row['obligation_level'],r.obligation_level)
             self.assertEqual(json.loads(row['exact_constraints']),r.constraints)
             self.assertEqual(json.loads(row['source_references'])[0]['passage_id'],self.sid)
@@ -51,6 +51,18 @@ class ChecklistTests(unittest.TestCase):
         with self.store.connect() as db: self.assertEqual(db.execute('SELECT COUNT(*) FROM checklist_approvals').fetchone()[0],1)
         self.edit(self.first,'Vier Workshops – erneute Prüfung')
         self.assertIsNone(restarted.current(self.store.load(self.pid),self.rows))
+
+    def test_older_saved_csv_uses_requirement_header_on_download(self):
+        from mesakumo.checklist import make_csv
+        def legacy(*args):
+            return make_csv(*args).replace(b',requirement,', b',statement,', 1)
+        approved=self.approve(csv_factory=legacy)
+        current=self.service.current(self.store.load(self.pid),self.rows)
+        original=list(csv.reader(io.StringIO(approved['csv'].decode())))
+        downloaded=list(csv.reader(io.StringIO(current['csv'].decode())))
+        self.assertIn('requirement',downloaded[0])
+        self.assertNotIn('statement',downloaded[0])
+        self.assertEqual(original[1:],downloaded[1:])
 
     def test_csv_failure_atomic_recovery(self):
         before=self.store.load(self.pid).to_dict()
@@ -116,7 +128,7 @@ class ChecklistStreamlitTests(unittest.TestCase):
             rev=project.revision
             project.requirements=[Requirement('R-candidate-1','Original candidate',[sid]),Requirement('R-candidate-2','Remove candidate',[sid])]
             project.revision+=1;store.save(project,rev)
-            with patch.dict(os.environ,{'MESAKUMO_PARTICIPANT_DIR':tmp,'MESAKUMO_DATA_DIR':data,'MESAKUMO_LLM_PROVIDER':'disabled'}):
+            with patch.dict(os.environ,{'MESAKUMO_PARTICIPANT_DIR':tmp,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':data,'MESAKUMO_LLM_PROVIDER':'disabled'}):
                 def widget(app,kind,label): return next(w for w in getattr(app,kind) if w.label==label)
                 app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
@@ -163,7 +175,7 @@ class ChecklistStreamlitTests(unittest.TestCase):
                 downloaded = storage.get_file(download_url.rsplit('/',1)[1]).content
                 self.assertEqual(downloaded,approved['csv'])
                 csvrows=list(csv.DictReader(io.StringIO(approved['csv'].decode())))
-                self.assertEqual([r['statement'] for r in csvrows],[r.text for r in store.load(project.id).requirements])
+                self.assertEqual([r['requirement'] for r in csvrows],[r.text for r in store.load(project.id).requirements])
                 # New AppTest instance represents a fresh app session/process state.
                 app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
                 self.assertFalse(app.exception)

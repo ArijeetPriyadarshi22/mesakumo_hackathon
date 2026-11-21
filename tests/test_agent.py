@@ -15,6 +15,19 @@ class Scripted:
         action=next(self.actions)
         return json.dumps(action(prompt) if callable(action) else action)
 
+class CoverageModel:
+    def __init__(self, fail_first=False): self.calls=0; self.fail_first=fail_first
+    def complete(self,prompt):
+        from mesakumo.models import ModelUnavailable
+        self.calls+=1
+        if self.fail_first and self.calls==1:
+            raise ModelUnavailable('Synthetic provider failure')
+        group=json.loads(prompt.split('Sources:\n')[1].split('\nPrevious response')[0])
+        ref=next(ref for ref,b in group.items() if 'three workshops' in b['text'])
+        return json.dumps({'requirements':[{'statement':'Exactly three workshops are mandatory.',
+            'evidence_ids':[ref],
+            'kind':'deliverable','constraints':['three']}]})
+
 def action(tool,**args): return {'tool':tool,'args':args}
 
 class AgentTests(unittest.TestCase):
@@ -82,17 +95,17 @@ class AgentTests(unittest.TestCase):
 
     def test_streamlit_no_calls_on_reopen(self):
         from streamlit.testing.v1 import AppTest
-        class BusyModel(Scripted):
+        class BusyModel(CoverageModel):
             def complete(inner, prompt):
                 import streamlit as st
                 self.assertTrue(st.session_state.extraction_busy)
                 return super().complete(prompt)
-        model=BusyModel(self.sequence())
+        model=BusyModel()
         other=Path(self.tmp.name)/'Ausschreibung 3'
         other.mkdir()
         (other/'specification.txt').write_text('A separate tender.')
         # Use actual UI-selected project created from this fixture; keep SQLite isolated.
-        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_DATA_DIR':'data/test_agent_ui','MESAKUMO_LLM_PROVIDER':'disabled'}):
+        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':'data/test_agent_ui','MESAKUMO_LLM_PROVIDER':'disabled'}):
             with patch('mesakumo.models.configured_model',return_value=model):
                 # Separate UI DB: stable IDs match this fixture. Remove any previous fixture run.
                 import shutil
@@ -100,6 +113,7 @@ class AgentTests(unittest.TestCase):
                 app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
                 self.assertEqual(model.calls,0)
+                self.assertEqual([b.label for b in app.sidebar.button], ['Rescan', 'Start extraction'])
                 app.run(); self.assertEqual(model.calls,0)
                 tender=next(w for w in app.selectbox if w.label=='Tender pack')
                 tender.select('Ausschreibung 3').run()
@@ -111,7 +125,7 @@ class AgentTests(unittest.TestCase):
                 calls=model.calls
                 self.assertFalse(app.session_state['extraction_busy'])
                 self.assertFalse(next(w for w in app.selectbox if w.label=='Tender pack').disabled)
-                self.assertEqual(calls,4)
+                self.assertEqual(calls,1)
                 app.run();self.assertFalse(app.exception);self.assertEqual(model.calls,calls)
 
     def test_foreign_scope_and_unread_batch_rejected(self):
@@ -152,8 +166,8 @@ class AgentTests(unittest.TestCase):
     def test_streamlit_failure_retry_button(self):
         from streamlit.testing.v1 import AppTest
         import shutil
-        model=Scripted([action('read_tender_passages',document_id='foreign',offset=0)]+self.sequence())
-        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_DATA_DIR':'data/test_agent_retry_ui','MESAKUMO_LLM_PROVIDER':'disabled'}), patch('mesakumo.models.configured_model',return_value=model):
+        model=CoverageModel(fail_first=True)
+        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':'data/test_agent_retry_ui','MESAKUMO_LLM_PROVIDER':'disabled'}), patch('mesakumo.models.configured_model',return_value=model):
             shutil.rmtree('data/test_agent_retry_ui',ignore_errors=True)
             app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
             self.assertFalse(app.exception); self.assertEqual(model.calls,0)
@@ -162,18 +176,21 @@ class AgentTests(unittest.TestCase):
             self.assertFalse(app.session_state['extraction_busy'])
             self.assertFalse(next(w for w in app.radio if w.label=='Page').disabled)
             app.run();self.assertEqual(model.calls,1)
-            button=next(b for b in app.button if b.label=='Retry failed extraction')
+            button=next(b for b in app.button if b.label=='Start extraction')
             button.click().run()
-            self.assertFalse(app.exception);self.assertEqual(model.calls,5)
-            app.run();self.assertEqual(model.calls,5)
+            self.assertFalse(app.exception);self.assertEqual(model.calls,2)
+            app.run();self.assertEqual(model.calls,2)
 
     def test_fenced_json_action_keeps_validation(self):
         from mesakumo.agent import parse_action
         raw = json.dumps(action('list_tender_documents',offset=0))
         self.assertEqual(parse_action('```json\n'+raw+'\n```'),json.loads(raw))
+        self.assertEqual(parse_action('Let me list the documents.\n\n```json\n'+raw+'\n```'),json.loads(raw))
+        with self.assertRaises(ValueError):
+            parse_action('```json\n'+raw+'\n```\n```json\n'+raw+'\n```')
         with self.assertRaises(ValueError): parse_action('Explanation: '+raw)
         class FencedModel(Scripted):
-            def complete(inner,prompt): return '```json\n'+super().complete(prompt)+'\n```'
+            def complete(inner,prompt): return 'Here is the next action.\n```json\n'+super().complete(prompt)+'\n```'
         result=self.runs.ensure(self.project,self.rows,FencedModel(self.sequence()))
         self.assertEqual(result['status'],'completed')
 
@@ -191,3 +208,37 @@ class AgentTests(unittest.TestCase):
         self.assertIn('invalid JSON',result['error'])
         self.assertNotIn('HTTP 403',result['error'])
         self.assertEqual(result['attempt'],2)
+
+    def test_structured_logs_and_specific_citation_diagnostic(self):
+        model=Scripted([action('submit_requirement_candidates', requirements=[
+            {'statement':'Synthetic obligation', 'source_ids':['unknown'],
+             'kind':'deliverable', 'constraints':[]}], processed_batch_ids=[], done=True)])
+        result=self.runs.ensure(self.project,self.rows,model)
+        self.assertEqual(result['status'],'failed')
+        self.assertIn('row 1',result['error'])
+        self.assertIn('known passage IDs',result['error'])
+        events=[json.loads(line) for line in (self.store.path.parent/'extraction.jsonl').read_text().splitlines()]
+        self.assertEqual(events[-1]['status'],'failed')
+        self.assertEqual(events[-1]['project_id'],self.project.id)
+        self.assertEqual(events[-1]['tool'],'submit_requirement_candidates')
+        self.assertIn('time',events[-1])
+        self.assertNotIn('Synthetic obligation',json.dumps(events))
+        self.assertEqual(result['trace'][-1]['stage'],'submitting')
+
+    def test_sidebar_start_from_another_page(self):
+        from streamlit.testing.v1 import AppTest
+        import shutil
+        model=CoverageModel()
+        folder='data/test_sidebar_start_ui'
+        self.addCleanup(shutil.rmtree,folder,True)
+        shutil.rmtree(folder,ignore_errors=True)
+        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,
+                'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':folder,'MESAKUMO_LLM_PROVIDER':'disabled'}), patch(
+                'mesakumo.models.configured_model',return_value=model):
+            app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+            app.sidebar.radio[0].set_value('Evidence Matching').run()
+            self.assertEqual(model.calls,0)
+            next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(model.calls,1)
+            self.assertEqual(app.sidebar.radio[0].value,'Tender Requirements')

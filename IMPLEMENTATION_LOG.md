@@ -1,5 +1,77 @@
 # Implementation history
 
+## Page 2 milestone C — 21 November 2026 — complete
+
+- Page 2 now displays one reviewed row per approved requirement, the six
+  requested columns, and Gap / next action. Reviewers can inspect exact,
+  separate tender and historical evidence excerpts, change the fit and notes,
+  and edit citations within the selected corpus.
+- The review and selection persist in the workspace. SQLite commits the
+  approved snapshot and UTF-8 evidence CSV together. Page 3 checks the
+  current Page 1 approval, review revision, selection and captured file hashes.
+  Incomplete rows block approval. Genuine No match and file coverage gaps
+  can be acknowledged once review is complete.
+- Scripted verification covered citation validation, exact excerpts, edit and
+  removal, CSV download bytes and row parity, separate Page 1 CSV, restart with
+  persistence enabled, rollback and retry, handoff and invalidation after
+  review, selection, evidence file version and tender source changes.
+  All 62 tests and the HTTP smoke test passed.
+- The actual reference deck was read locally for slide citations. Real tender
+  and historical evidence were not sent to the provider for this milestone.
+  Visual browser QA and real tender grading remain unverified.
+  Page 3 only acknowledges receipt of the approved evidence snapshot.
+
+## Page 2 milestone B — 21 November 2026 — complete
+
+- Start Evidence Matching and explicit Retry each capture the approved project,
+  phase, revision, original requirement rows, and selected document versions.
+  Results stay within the current UI session and are cleared when the approval
+  or selected paths change. A retry captures a new snapshot of those files.
+- LangGraph runs a bounded search and judgment loop per requirement with one
+  configured Requesty model instance per run. The local lexical index searches
+  requirement text and exact constraints. The model may refine the query or
+  read adjacent passages of an already retrieved source. Each requirement
+  gets at most four model actions, including the final judgment.
+- Action validation restricts citations to retrieved selected passages. Python
+  attaches the original text, filename, location, role and document version.
+  The UI preserves the tender requirement and its original citations and
+  displays evidence fit, missing criteria, current actions and the tool trace.
+  Provider failures, unprocessed rows and unreadable files are visible gaps.
+- Scripted checks: all three grades, refined search, nearby text, invalid and
+  unselected citations, historical proposals, current signatures, unreadable
+  evidence, provider failure, skipped work, the action limit, and explicit UI
+  retry. All 62 automated tests and the HTTP smoke test passed.
+- Live synthetic check: the configured Requesty EU model judged two synthetic
+  requirements in a complete run. It returned Strong match with a valid source
+  for a delivered audit and No match with a current-action flag and no citation
+  for a new bid signature. Only synthetic content was used in the live check.
+- Remaining work: assess semantic grading on real tender evidence, add OCR
+  for textless sources, and carry reviewed evidence into proposal drafting.
+  UI behavior was verified with Streamlit AppTest.
+
+## Page 2 milestone A — 21 November 2026 — complete
+
+- Evidence Matching uses `ChecklistReview.current()` and displays the saved approval's
+  project, phase, revision and requirement IDs. The existing Continue to Evidence
+  Matching button takes the reviewer there after Approve and Save. Missing or stale
+  approvals lock Page 2 and discard any preview.
+- The inventory picker includes 19 eligible files in three roles: Previous project
+  sources, Team information and Historical proposal. Buyer inputs and blank forms,
+  credentials and templates are excluded. Historical bids retain their role. Paths
+  are resolved beneath the participant directory using Unicode normalization.
+- Start Evidence Matching reads only the chosen files and shows per-file status
+  and a local source preview. PPTX citations use the order in the presentation,
+  including when a slide has no text or its XML filename is out of sequence.
+- Verification: all 57 automated tests passed, including four focused tests for the
+  approval and CSV handoff, stale source gate, selection controls, path resolution,
+  file statuses and PPTX citations. The legacy HTTP smoke test passed. The actual
+  reference deck yielded 64 text passages, with citations verified for slides 3,
+  15 and 65. Selecting all actual inventory entries locally yielded 16 readable
+  files and three PDFs flagged for pages without extractable text.
+- Remaining work: requirement-to-evidence matching and grading, and OCR for
+  scanned or otherwise textless pages. This milestone makes no model calls.
+  Streamlit AppTest covered the UI flow. Visual browser QA was not run.
+
 ## Foundation baseline verification — 20 November 2026 — partial
 
 This entry is a retrospective record, not a claim of a prior independent browser

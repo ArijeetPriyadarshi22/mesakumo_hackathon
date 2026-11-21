@@ -3,6 +3,8 @@ import hashlib
 import json
 import re
 import fcntl
+from datetime import datetime, timezone
+import logging
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .requirements import tender_passages, validate_candidates, invalidate_checklist
@@ -33,7 +35,7 @@ def sources(project, rows):
 
 def snapshot(project, rows):
     docs, _, _ = sources(project, rows)
-    return hashlib.sha256(encoded([(k, d.version, d.status) for k, d in sorted(docs.items())]).encode()).hexdigest()
+    return hashlib.sha256(encoded([(k, d.version, d.status, d.parser_version) for k, d in sorted(docs.items())]).encode()).hexdigest()
 
 
 def merge_candidates(existing, incoming):
@@ -56,12 +58,16 @@ def merge_candidates(existing, incoming):
 
 def possible_conflicts(candidates):
     result = []
+    words = [set(re.findall(r'\w+', r.text.casefold())) for r in candidates]
     for i, a in enumerate(candidates):
-        for b in candidates[i+1:]:
-            wa, wb = set(re.findall(r'\w+', a.text.casefold())), set(re.findall(r'\w+', b.text.casefold()))
-            if a.text != b.text and len(wa & wb) / max(1, len(wa | wb)) >= .5:
-                result.append({'first': a.id, 'second': b.id, 'status': 'Potential contradictory wording — human review required'})
-    return result[:100]
+        for j in range(i+1,len(candidates)):
+            b = candidates[j]
+            wa, wb = words[i], words[j]
+            if a.text != b.text and len(wa & wb) / max(1,len(wa | wb)) >= .5:
+                result.append({'first':a.id,'second':b.id,'status':'Similar wording — human review required; not a verified contradiction'})
+                if len(result) == 100:
+                    return result
+    return result
 
 
 class AgentState(TypedDict):
@@ -87,6 +93,8 @@ Allowed kinds: deliverable, eligibility/evidence, submission instruction, deadli
 An empty requirements list is valid for a batch with no obligations. Mark only batches you analysed as processed.
 Use done=true to finish. Read specifications first, follow references to attachments yourself, then cover remaining documents.
 Preserve dates, quantities and mandatory wording. Never invent facts. Keep distinct obligations separate.
+source_ids must contain exact passage_id values, never batch_id or document_id values.
+Every requirement must have exactly statement, source_ids, kind and constraints, with no extra fields.
 Cite only read passage IDs. Seek contradictory wording and retain both versions for review.
 List is paginated. Document entries include batch counts. Unsupported documents are gaps, never evidence.
 Use concise statements in German. You have at most 40 actions. If unable to cover all sources, finish honestly.
@@ -94,9 +102,9 @@ Use concise statements in German. You have at most 40 actions. If unable to cove
 
 
 def parse_action(raw):
-    # Claude may wrap JSON in one Markdown fence. Unwrap only that exact form;
+    # Claude can introduce a single JSON fence with prose. Reject ambiguous blocks;
     # JSON decoding and tool/argument validation still apply afterwards.
-    fenced = re.fullmatch(r'\s*```(?:json)?[ \t]*\n(.*?)\n```\s*', raw, re.DOTALL)
+    fenced = re.fullmatch(r'\s*[^`{}]*```(?:json)?[ \t]*\n(.*?)\n```[^`{}]*\s*', raw, re.DOTALL)
     return json.loads(fenced.group(1) if fenced else raw)
 
 
@@ -109,9 +117,11 @@ def graph_for(project, rows, model, checkpoint, max_steps=MAX_STEPS):
             'step': state['steps'], 'last_tool_result': state['observation'],
             'read_batch_count': len(state['read']), 'processed_batch_count': len(state['processed']),
             'candidate_count': len(state['candidates']),
+            'allowed_source_ids': list(dict.fromkeys(batches[b]['passage_id'] for b in state['read'])),
             'document_progress': [{'id':did, 'next_unprocessed_offset': next((i for i,b in enumerate([b for b in batches.values() if b['document_id']==did]) if b['batch_id'] not in state['processed']), None)} for did in list(docs)[:40]]})
         if len(prompt.encode()) + 1000 > LIMIT:
             raise ValueError('Prompt exceeds request limit including system overhead')
+        checkpoint({**state, 'stage': 'model_request'})
         try:
             raw = model.complete(prompt)
         except ModelUnavailable as exc:
@@ -123,8 +133,9 @@ def graph_for(project, rows, model, checkpoint, max_steps=MAX_STEPS):
             raise ValueError('Model action is empty, non-text or exceeds the response limit. Explicit retry required.')
         try:
             action = parse_action(raw)
-        except (ValueError, TypeError):
-            raise ValueError('Model returned invalid JSON instead of a tool action. Explicit retry required.') from None
+        except (ValueError, TypeError) as exc:
+            detail = f' at line {exc.lineno}, column {exc.colno}' if isinstance(exc, json.JSONDecodeError) else ''
+            raise ValueError('Model returned invalid JSON instead of a tool action' + detail + '. Explicit retry required.') from None
         if not isinstance(action, dict) or set(action) != {'tool', 'args'} or action['tool'] not in TOOLS or not isinstance(action['args'], dict):
             raise ValueError('Model returned an unsupported tool action or invalid arguments. Explicit retry required.')
         return {'action': action, 'steps': state['steps'] + 1}
@@ -188,8 +199,9 @@ def graph_for(project, rows, model, checkpoint, max_steps=MAX_STEPS):
             try: update = fn(state)
             except Exception as exc:
                 update = {'status':'failed', 'error': str(exc) if isinstance(exc,ValueError) else 'Agent failed; explicit retry required',
-                    'trace': state['trace'] + [{'step': state['steps'], 'tool': state.get('action', {}).get('tool', 'agent'), 'status':'rejected or failed'}]}
-            checkpoint({**state, **update})
+                    'trace': state['trace'] + [{'step': state['steps'], 'tool': state.get('action', {}).get('tool', 'agent'), 'status':'rejected or failed', 'stage':fn.__name__,
+                        'error': str(exc) if isinstance(exc, ValueError) else type(exc).__name__}]}
+            checkpoint({**state, **update, 'stage': fn.__name__})
             return update
         return node
     graph = StateGraph(AgentState)
@@ -223,7 +235,7 @@ class ExtractionRuns:
             if prior and prior['status']=='running':
                 prior.update(status='failed', error='Interrupted run. Explicit retry required.')
                 self._save(project.id,key,prior)
-            if prior and not (retry and prior['status']=='failed'): return prior
+            if prior and not (retry and prior['status'] in ('failed', 'completed', 'partial')): return prior
             if isinstance(model, DisabledModel): return prior
             state = dict(status='running',steps=0,action={},observation={},read=[],processed=[],trace=[],candidates=[],error='')
             state['attempt'] = prior.get('attempt',1)+1 if prior else 1
@@ -253,8 +265,22 @@ class ExtractionRuns:
                     (current.revision,encoded(current.to_dict()),current.id,expected))
                 if cursor.rowcount != 1: raise ValueError('Project changed during extraction')
                 db.execute('UPDATE extraction_runs SET payload=? WHERE project_id=? AND snapshot=?', (encoded(result), project.id,key))
+            self.log_event(project.id, key, result)
             return result
 
     def _save(self, pid, key, state):
+        self.log_event(pid, key, state)
         with self.store.connect() as db:
             db.execute('INSERT INTO extraction_runs VALUES (?,?,?) ON CONFLICT(project_id,snapshot) DO UPDATE SET payload=excluded.payload', (pid,key,encoded(state)))
+
+    def log_event(self, pid, key, state):
+        event = dict(time=datetime.now(timezone.utc).isoformat(), project_id=pid,
+            snapshot=key, attempt=state.get('attempt', 1), status=state['status'],
+            step=state['steps'], tool=state.get('action', {}).get('tool', 'agent'),
+            read_batches=len(state['read']), processed_batches=len(state['processed']),
+            candidates=len(state['candidates']), error=state.get('error', ''),
+            stage=state.get('stage', state['trace'][-1].get('stage', '') if state['trace'] else 'starting'))
+        # Deliberately exclude prompts, provider bodies, credentials and source text.
+        logging.getLogger(__name__).info('extraction %s', encoded(event))
+        with (self.store.path.parent / 'extraction.jsonl').open('a', encoding='utf-8') as log:
+            log.write(encoded(event) + '\n')

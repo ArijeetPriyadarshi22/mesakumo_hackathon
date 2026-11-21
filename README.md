@@ -1,3 +1,112 @@
+## Page 2 milestone C — evidence review and approval
+
+From Evidence Matching, choose **Read evidence and its sources** to inspect
+the exact tender and historical evidence excerpts separately. Use **Save
+evidence review** to correct the fit, edit evidence notes or gap/action notes,
+and add or remove citations from the selected corpus. Strong and Partial
+matches require a citation. No match requires a gap note and approval
+acknowledgment. Failed and unprocessed rows stay visible and block approval
+until resolved or rerun.
+
+**Approve and Save Evidence** stores the reviewed snapshot and its UTF-8 CSV
+in one SQLite transaction. The evidence CSV has one row per requirement,
+the six review columns, stable requirement IDs, checklist and review revisions,
+gap/action notes and distinct structured tender and evidence citations with
+document IDs, locations, excerpts and versions. The Page 1 checklist CSV
+remains a separate download.
+
+Page 3 can confirm receipt of a current approved evidence snapshot. Edits,
+selection changes, selected file version changes and stale checklist
+approvals block the handoff until the corresponding current review is approved.
+Use `MESAKUMO_KEEP_SESSION=yes` to reopen the same workspace after restart.
+With the default fresh-session setting, a new browser session opens a new
+workspace.
+
+Verification used synthetic tender and evidence inputs with a scripted model.
+Streamlit AppTest covered citation edits, approval, stored download bytes,
+CSV-to-table comparison, reopen, acknowledgment, a simulated SQLite write
+failure, and invalidation. The local reference deck slide-citation check
+also passed. No real tender matching call or visual browser QA was performed
+for this milestone. Proposal generation remains future work.
+
+---
+
+# Tender isolation, readable results and complete source scheduling
+
+Start extraction is beside Rescan. The selected tender/phase appears above the
+results and inside the loading dialog. The overview shows Requirement, Category
+and Source document/location. Search filters the overview; **Read requirement and
+its sources** shows the full statement, obligation classification, constraints,
+original supporting excerpts and complete original passages with wrapping text.
+Numbers in source filenames identify documents; the selected tender heading
+identifies the tender pack.
+
+New browser sessions start with a fresh workspace, including when
+MESAKUMO_DATA_DIR is configured. Old workspace.sqlite3 results are not restored.
+Within a browser session, each tender/phase has a separate project. The optional
+MESAKUMO_KEEP_SESSION=yes setting restores the durable review workflow.
+Existing saved work has not been deleted.
+
+The UI now uses CoverageRuns, which schedules every current readable source batch,
+rather than allowing the model to finish early or stop at 40 actions. Numbered
+excerpts are supplied to the model; the application derives passage IDs, source
+versions, locations and original quotations from the selected evidence IDs.
+Requesty receives a strict JSON schema containing the permitted categories and
+current evidence IDs. Validation failures retry with diagnostics; dense groups
+split automatically if provider output is truncated. Failed batches remain gaps.
+Interrupted runs can resume their validated batches within the same source snapshot.
+Model candidates are replaced on a fresh run; human edits are retained.
+
+Document processing now includes XLSX sheet/row/cell references, AIDF data.lv
+references, Windows-encoded text, PDFs readable with an empty password, and DOCX
+headers/footers/notes. Parser versions invalidate old source snapshots. The local
+format audit found readable passages for every tender document across all four
+pack/phase selections. Scanned/password-protected/corrupt files still report gaps.
+
+Live verification on Ausschreibung 2 - mit Partner processed all **379 batches**
+from **341 passages in 8 documents**, saved **428 candidates**, and left **zero gaps**.
+Every one of **478 citations** resolved to the selected tender and every retained
+quotation matched the original passage. See data/coverage_audit_v2/audit.json.
+Source coverage and citation integrity do not certify semantic completeness:
+human review is still required to catch omitted, misunderstood or duplicated
+obligations. Five distributed candidate/source pairs were also spot-checked.
+
+52 automated tests and the legacy HTTP smoke pass, including tender switching,
+fresh browser sessions, source offsets, invalid evidence rejection, adaptive group
+splitting, interruption/resume, source formats, review and approval/export behavior.
+Browser visual inspection remains unverified because Safari inspection timed out.
+
+The sections below describe earlier implementations and historical checks.
+
+---
+
+# Sidebar extraction controls and diagnostics (21 November 2026)
+
+**Rescan** and **Start extraction** now sit side by side beneath the tender selector.
+Start explicitly runs the selected tender, including retrying a failed attempt,
+and opens Tender Requirements if invoked from another page. A non-dismissible
+loading dialog shows progress during the run.
+
+A live diagnostic reproduced Claude returning explanatory prose followed by one
+fenced JSON action. The parser now accepts that unambiguous format; multiple JSON
+blocks and invalid tool arguments/citations are still rejected. The prompt also
+lists citation IDs already read and distinguishes passage IDs from batch IDs.
+Validation errors identify the row and failing field.
+
+Each new run appends timestamped JSON events to `data/extraction.jsonl` (or beside
+the configured workspace database), with project, snapshot, attempt, stage, tool,
+step, coverage counts and error. Prompts, raw model replies, source text and API
+keys are excluded. Saved failures keep their original diagnostics until retried.
+
+Validation: 42 automated tests pass. A live Requesty check using synthetic tender
+text completed in three actions and saved two requirements. Authorized live verification on Ausschreibung 1 saved 58 requirements in 17 actions
+without parsing or citation failures. Coverage is partial: 170 processed batches,
+406 unprocessed batches and five documents without readable passages. The UI
+explicitly warns about incomplete coverage. Results are saved in the main workspace.
+Safari inspection timed out, so the visual layout has not been browser-verified.
+
+---
+
 # Start extraction explicitly (21 November 2026)
 
 Select a tender pack (and phase where available), then click **Start extraction**.

@@ -186,3 +186,18 @@ class ProviderBoundaryTests(unittest.TestCase):
                 configure_team_one()
                 self.assertEqual(os.environ['REQUESTY_API_KEY'], 'sk-explicit+value==')
                 self.assertNotIn('MESAKUMO_LLM_API_KEY', os.environ)
+
+class StructuredProviderTests(unittest.TestCase):
+    def test_json_schema_is_sent_to_requesty(self):
+        from mesakumo.coverage import extraction_schema
+        schema=extraction_schema({'E1':{}})
+        def handler(request):
+            body=json.loads(request.content)
+            self.assertEqual(body['response_format']['type'],'json_schema')
+            self.assertTrue(body['response_format']['json_schema']['strict'])
+            self.assertEqual(body['response_format']['json_schema']['schema'],schema)
+            return httpx.Response(200,json={'choices':[{'index':0,'finish_reason':'stop',
+                'message':{'role':'assistant','content':'{"requirements":[]}'}}]})
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            model=RequestyModel('https://router.eu.requesty.ai/v1','model','fixture-key',http_client=client)
+            self.assertEqual(model.complete_json('Synthetic JSON prompt',schema),'{"requirements":[]}')

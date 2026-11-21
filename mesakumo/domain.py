@@ -13,6 +13,7 @@ class Document:
     version: str = 'synthetic-v1'
     available_date: str | None = None
     original_path: str = ""
+    parser_version: str = ""
     error: str = ""
 
 @dataclass
