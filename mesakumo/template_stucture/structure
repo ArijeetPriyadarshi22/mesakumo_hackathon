@@ -1,0 +1,336 @@
+=== Inspecting: Angebotstemplate.pptx (Total Slides: 21) ===
+
+--- Slide [0] (Layout: Angebot - Titelfolie) ---
+  [Text] name='Textplatzhalter 1' | left=4235441, top=5628603, w=2689436, h=246221 | text=''
+  [Text] name='Textplatzhalter 2' | left=867258, top=4309602, w=6037299, h=384721 | text=''
+  [Text] name='Textplatzhalter 3' | left=875114, top=4832348, w=6029443, h=384721 | text=''
+  [Text] name='Textplatzhalter 4' | left=875114, top=5628603, w=2689436, h=246221 | text=''
+  [Text] name='Inhaltsplatzhalter 5' | left=9087170, top=1119130, w=2303463, h=2304000 | text=''
+
+--- Slide [1] (Layout: Title and Content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 2' | left=336000, top=368300, w=11520000, h=815608 | text='Wir freuen uns auf die Zusammenarbeit'
+  [Text] name='Inhaltsplatzhalter 12' | left=334963, top=1090800, w=5689600, h=5076000 | text='Sehr geehrter Herr/Frau [Name des Ansprechpartners], | herzlich willkommen be...'
+  [Text] name='Ellipse 1' | left=7967663, top=-38218, w=2732946, h=1628644 | text='Projektleitung | aktualisieren'
+  [Text] name='Franziska' | left=6464802, top=1370655, w=2475879, h=2475879 | text=''
+  [Text] name='Ellipse 14' | left=1992904, top=4952878, w=2732946, h=1628644 | text='Unterschrift hinzufügen'
+  [Text] name='Rechteck 15' | left=7139668, top=4032020, w=4717370, h=2152880 | text='Ich freue mich darauf Ihnen bei Projekttitel tatkräftig zur Seite zu stehen u...'
+  [Text] name='Titel 13' | left=6784601, top=3334501, w=505957, h=479555 | text='„'
+  [Text] name='AutoShape 2' | left=7378785, top=3661049, w=846000, h=370971 | text=''
+  [Text] name='Titel 13' | left=11519182, top=6341744, w=505957, h=479555 | text='„'
+  [Text] name='Textfeld 25' | left=9081931, top=2145063, w=2574114, h=923330 | text='Franziska Reichle | Senior Consultant bei der mesakumo GmbH'
+  [Text] name='Datumsplatzhalter 5' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 6' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [2] (Layout: Nur Titel) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='think-cell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='GreyBox+Arrow' | left=-1, top=0, w=6035417, h=6858000 | text=''
+  [Text] name='Titel 1' | left=334961, top=362742, w=11520000, h=430887 | text='mesakumo: Erfahrener Partner für Digital- & KI- & IT-Strategie'
+  [Shape:PICTURE (13)] name='Grafik 5' | left=1588, top=1588, w=1588, h=1588
+  [Shape:GROUP (6)] name='Gruppieren 52' | left=373590, top=4187803, w=2927488, h=1472958
+  [Text] name='Textfeld 11' | left=3491762, top=5832892, w=2338059, h=424732 | text='Frauen und ♂Männer im Team'
+  [Text] name='Textfeld 12' | left=2600559, top=5808070, w=1055647, h=477054 | text='~50%'
+  [Shape:PICTURE (13)] name='Grafik 13' | left=3366776, top=4991315, w=805616, h=805616
+  [Shape:PICTURE (13)] name='Grafik 14' | left=718481, top=938808, w=914400, h=914400
+  [Text] name='Textfeld 15' | left=-244767, top=1683931, w=2909529, h=338554 | text='Gründung 2021'
+  [Text] name='Textfeld 18' | left=2843247, top=3928905, w=2473255, h=701731 | text='Seit dem ersten Tag CO2- Fußabdruck gemessen, reduziert, Rest ausgeglichen.'
+  [Shape:PICTURE (13)] name='Grafik 34' | left=3301289, top=3068960, w=914400, h=914400
+  [Shape:PICTURE (13)] name='key' | left=810277, top=2564904, w=681318, h=619379
+  [Text] name='Textfeld 38' | left=253068, top=3123910, w=2281384, h=808606 | text='mehr als 270 Jahre relevante Berufserfahrung ♂(Mittelstand, IT, Digital, KI) ...'
+  [Text] name='Rechteck 2' | left=10066955, top=1712825, w=1800225, h=2001505 | text=''
+  [Text] name='Textfeld 3' | left=10090376, top=1951302, w=1810192, h=707887 | text='90%'
+  [Text] name='Textfeld 6' | left=10070839, top=2421040, w=1796341, h=553998 | text='| UMSETZUNG'
+  [Text] name='Textfeld 22' | left=7111411, top=1167079, w=3798232, h=369333 | text='Digitalisierung, die wirkt'
+  [Text] name='Rechteck 23' | left=8122092, top=1712825, w=1800225, h=2001505 | text=''
+  [Text] name='Textfeld 24' | left=8112125, top=1947003, w=1810192, h=701040 | text='150+'
+  [Text] name='Textfeld 25' | left=8112125, top=2636722, w=1817294, h=338554 | text='PROJEKTE'
+  [Text] name='Textfeld 26' | left=8122092, top=3202871, w=1817294, h=461665 | text='erfolgreich abgeschlossen'
+  [Text] name='Textfeld 17' | left=10066955, top=3202871, w=1817294, h=461665 | text='Begleitung unserer Strategiekunden'
+  [Text] name='Rechteck 29' | left=6177229, top=1708281, w=1800225, h=2001505 | text=''
+  [Text] name='Textfeld 30' | left=6167262, top=1940851, w=1810192, h=701040 | text='70+'
+  [Text] name='Textfeld 31' | left=6167262, top=2630570, w=1817294, h=338554 | text='KUNDEN'
+  [Text] name='Textfeld 32' | left=6177229, top=3387538, w=1817294, h=276998 | text='seit Gründung'
+  [Text] name='Rechteck 35' | left=6177229, top=3839032, w=5676564, h=2345868 | text=''
+  [Text] name='Textfeld 41' | left=6349765, top=4051718, w=3269582, h=707886 | text='Wir arbeiten mit Kunden aus dem produzierenden Mittelstand,♂vorwiegend B2B'
+  [Text] name='Textfeld 43' | left=8432165, top=5145175, w=3269582, h=944874 | text='Wir beraten system- und anbieterunabhängig: | Im Sinne der besten Lösung für ...'
+  [Text] name='Textfeld 45' | left=1965030, top=2090168, w=3598484, h=707887 | text='mesa (griechisch „hinein, innerhalb“)  | + kumo (japanisch „Wolke“) = mesakum...'
+  [Shape:PICTURE (13)] name='Grafik 49' | left=3348773, top=1275190, w=830998, h=830998
+  [Shape:PICTURE (13)] name='Grafik 54' | left=7705681, top=4509165, w=914400, h=914400
+  [Shape:PICTURE (13)] name='Grafik 56' | left=10804206, top=4422328, w=772974, h=772974
+  [Text] name='Datumsplatzhalter 16' | left=334963, top=6607462, w=621965, h=146194 | text='09.10.2026'
+  [Text] name='Fußzeilenplatzhalter 19' | left=1095692, top=6607462, w=3916744, h=146194 | text='Künstliche Intelligenz im Oktober 2026: Stand, Chancen, Perspektiven'
+
+--- Slide [3] (Layout: Agenda with Image) ---
+  [Text] name='Bildplatzhalter 1' | left=4227874, top=372916, w=7632000, h=4176000 | text=''
+  [Text] name='Textplatzhalter 4' | left=371480, top=2600325, w=5598000, h=3584575 | text='Projektdetails | Ausgangssituation | Lösung mit bewährter Vorgehensweise | Wi...'
+  [Text] name='Ellipse 5' | left=7324405, top=1286536, w=2732946, h=1628644 | text='Bild Kunde'
+  [Text] name='Datumsplatzhalter 6' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 7' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [4] (Layout: Image Left full height and content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Bildplatzhalter 5' | left=336843, top=368300, w=3744001, h=6121400 | text=''
+  [Text] name='Titel 4' | left=4222962, top=368300, w=7632000, h=815608 | text='Unser Verständnis der Ausgangslage'
+  [Text] name='Content Placeholder 1' | left=5252501, top=1232456, w=6602460, h=1044000 | text='Bestehende IT | 4 Standorte, 4 Werke | 4 IT-Organisationen + 1 IT in der Spar...'
+  [Text] name='Rectangle 82' | left=3545970, top=1232456, w=1706532, h=1044000 | text='Hintergrund'
+  [Text] name='Rectangle 82' | left=3545970, top=2486339, w=1706532, h=1044000 | text='Heraus-forderungen'
+  [Text] name='Rectangle 82' | left=3545970, top=3740222, w=1706532, h=1044000 | text='Ziel 1'
+  [Text] name='Rectangle 82' | left=3533159, top=4994104, w=1706532, h=1044000 | text='Ziel 2'
+  [Text] name='Content Placeholder 1' | left=5252501, top=2486339, w=6602460, h=1044000 | text='IT-Strategie grundsätzlich vorhanden | IT-Strategie für Unternehmen wurde aus...'
+  [Text] name='Content Placeholder 1' | left=5252501, top=3740222, w=6602460, h=1044000 | text='Alignment des Managements von Sparte und Standorten zur gemeinsamen IT-Strate...'
+  [Text] name='Content Placeholder 1' | left=5252501, top=4994104, w=6602460, h=1044000 | text='Check-up Ihres Demand und Projektportfolio Management Prozesses  | Demand Man...'
+  [Text] name='Ellipse 17' | left=574934, top=943369, w=2732946, h=1628644 | text='Bild Kunde'
+  [Text] name='Datumsplatzhalter 1' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 6' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [5] (Layout: Title and Content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Inhaltsplatzhalter 1' | left=334963, top=1090800, w=11520000, h=5076000 | text=''
+  [Text] name='Titel 2' | left=336000, top=368300, w=11520000, h=430887 | text='Bewährte Vorgehensweise zu Projekt'
+  [Text] name='Ellipse 5' | left=1756362, top=2747943, w=2732946, h=1628644 | text='Inhalte ergänzen:♂ 1-n Folien'
+  [Text] name='Datumsplatzhalter 6' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 7' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [6] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Wie wir Sie unterstützen'
+  [Text] name='Freeform 27' | left=152727, top=1681034, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=334963, top=1089026, w=5480622, h=5095874 | text='Zu erwartende Projektergebnisse |  | Zielsetzung von Business Intelligence vo...'
+  [Text] name='Pentagon 23' | left=155775, top=1190194, w=1521950, h=524600 | text='Im Angebot enthalten'
+  [Text] name='Freeform 27' | left=5985203, top=1681033, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=6167438, top=1089026, w=5680887, h=3226942 | text='Auswahl, Beauftragung, Steuerung und Qualitätssicherung des technischen Imple...'
+  [Text] name='Pentagon 23' | left=5988251, top=1190193, w=1521950, h=524600 | text='Optionale Zusatzleistungen'
+  [Text] name='Rectangle 40' | left=6176153, top=4417135, w=5680887, h=1767764 | text='Nicht Teil des Projektes | Zielstruktur von Planungs- und Konsolidierungsproz...'
+  [Text] name='Datumsplatzhalter 11' | left=334963, top=6607462, w=618759, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 12' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [7] (Layout: Image Left full height and content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Bildplatzhalter 1' | left=336843, top=368300, w=3744001, h=6121400 | text=''
+  [Text] name='Titel 2' | left=4222962, top=368300, w=7632000, h=430887 | text='Ihre Mitarbeit im Projekt'
+  [Text] name='Inhaltsplatzhalter 5' | left=4222765, top=1080000, w=7632197, h=5075999 | text='Für eine gute Zusammenarbeit und ein erfolgreiches Projekt benötigen wir von ...'
+  [Text] name='Ellipse 6' | left=413833, top=2280632, w=2732946, h=1628644 | text='Bild Kunde'
+  [Text] name='Rectangle 12' | left=4863392, top=4895621, w=7017023, h=1438056 | text='Verfügbarkeit der KUNDE IT für die Mitarbeit bei der Implementierung der Date...'
+  [Text] name='Rectangle 12' | left=4845518, top=3319074, w=7017023, h=1412813 | text='Zugang zu relevanten Dokumenten und Entscheider:innen / Wissensträger:innen f...'
+  [Text] name='Rectangle 12' | left=4845519, top=1709026, w=7017023, h=1438056 | text='Eine:n verantwortliche:n, interne:n Ansprechpartner:in und mindestens ♂2-wöch...'
+  [Text] name='Rechteck 10' | left=3283415, top=4902949, w=1438056, h=1438056 | text=''
+  [Text] name='Rechteck 11' | left=3283415, top=3293832, w=1438056, h=1438056 | text=''
+  [Text] name='Rechteck 12' | left=3283415, top=1709026, w=1438056, h=1438056 | text=''
+  [Shape:PICTURE (13)] name='Grafik 13' | left=3565159, top=1970854, w=914400, h=914400
+  [Shape:PICTURE (13)] name='Grafik 14' | left=3565159, top=3598545, w=914400, h=914400
+  [Shape:PICTURE (13)] name='Grafik 15' | left=3565159, top=5098970, w=914400, h=914400
+  [Text] name='Ellipse 19' | left=1263799, top=4978818, w=2732946, h=1628644 | text='Passendes Icon wählen'
+  [Text] name='Datumsplatzhalter 16' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 17' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [8] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Rechteck 47' | left=364326, top=2164266, w=11678367, h=4323171 | text='​'
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Vorschlag für Projektverlauf des Projektes'
+  [Text] name='MIO_TEXTBOX_BODY2' | left=4224338, top=1089025, w=7632700, h=917513 | text='Der Großteil der Projektarbeit erfolgt seitens mesakumo durch Manager und Sen...'
+  [Text] name='Rechteck 198' | left=334963, top=1089025, w=3744912, h=920758 | text='10 Wochen | Projektlaufzeit'
+  [Shape:PICTURE (13)] name='Grafik 230' | left=635990, top=1171553, w=755703, h=755703
+  [Text] name='Sticker Workshop Ergebnis' | left=11211662, top=126183, w=1332000, h=402891 | text='Vorschlag'
+  [Text] name='Ellipse 6' | left=4436814, top=3807708, w=2732946, h=1628644 | text='Jahr dazuschalten | Chart prüfen'
+  [Shape:GROUP (6)] name='Gruppieren 127' | left=364326, top=2164266, w=11678367, h=4323171
+  [Text] name='Ellipse 5' | left=9465332, top=224118, w=2214282, h=864907 | text='Variante 1'
+  [Text] name='Datumsplatzhalter 7' | left=334963, top=6607462, w=618759, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 8' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [9] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Rechteck 167' | left=320467, top=2145395, w=11520043, h=4311722 | text='​'
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Vorschlag für Projektverlauf des Projektes'
+  [Text] name='MIO_TEXTBOX_BODY2' | left=4224338, top=1089025, w=7632700, h=917513 | text='Der Großteil der Projektarbeit erfolgt seitens mesakumo durch Manager und Sen...'
+  [Text] name='Rechteck 198' | left=334963, top=1089025, w=3744912, h=920758 | text='10 Wochen | Projektlaufzeit'
+  [Shape:PICTURE (13)] name='Grafik 230' | left=635990, top=1171553, w=755703, h=755703
+  [Text] name='Sticker Workshop Ergebnis' | left=11211662, top=126183, w=1332000, h=402891 | text='Vorschlag'
+  [Text] name='Ellipse 5' | left=9465332, top=224118, w=2214282, h=864907 | text='Variante 2'
+  [Shape:GROUP (6)] name='Gruppieren 192' | left=320467, top=2145396, w=11520043, h=4311722
+  [Text] name='Datumsplatzhalter 6' | left=334963, top=6607462, w=618759, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 7' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [10] (Layout: Nur Titel) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Rechteck 40' | left=3896280, top=3880831, w=2635118, h=2645121 | text='Externe Dienstleister'
+  [Text] name='Rechteck 39' | left=334963, top=3880831, w=2635118, h=2608869 | text='KUNDE'
+  [Text] name='Rectangle 3' | left=2199274, top=1046197, w=2742520, h=761746 | text='Vorname Nachname♂(Director Corporate Marketing)'
+  [Text] name='Rectangle 4' | left=2304406, top=914642, w=2340000, h=287337 | text='KUNDE Lenkungsausschuss'
+  [Shape:GROUP (6)] name='Group 49' | left=2199274, top=1990011, w=2742520, h=1499555
+  [Text] name='Rectangle 4' | left=440095, top=4375202, w=2340000, h=287337 | text='Marketing'
+  [Text] name='Rectangle 4' | left=440095, top=4729734, w=2340000, h=287337 | text='IT'
+  [Text] name='Rectangle 4' | left=4018601, top=4375511, w=2340000, h=287337 | text='Agentur für UX-Design'
+  [Shape:LINE (9)] name='Gewinkelte Verbindung 53' | left=4196554, top=2863545, w=391265, h=1643305
+  [Shape:LINE (9)] name='Gerade Verbindung mit Pfeil 18' | left=3570534, top=1807943, w=0, h=182068
+  [Text] name='Titel 21' | left=336000, top=368300, w=11520000, h=430887 | text='Beispielhafte Projektorganisation'
+  [Shape:LINE (9)] name='Gewinkelte Verbindung 53' | left=2415896, top=2726192, w=391265, h=1918012
+  [Text] name='Rectangle 4' | left=440095, top=5084266, w=2340000, h=287337 | text='Sales'
+  [Text] name='Rectangle 4' | left=4018601, top=4729734, w=2340000, h=409194 | text='Weitere Implementierungspartner'
+  [Text] name='Rechteck 33' | left=7457597, top=1089024, w=4734403, h=3839591 | text='mesakumo Projektleitung ♂Beispielhafte Aufgabenbereiche |  | Projektmanagemen...'
+  [Text] name='Rectangle 4' | left=440095, top=6147860, w=2340000, h=287337 | text='Landesgesellschaften'
+  [Text] name='Rectangle 4' | left=440095, top=5438798, w=2340000, h=287337 | text='Service'
+  [Text] name='Rectangle 4' | left=440095, top=5793330, w=2340000, h=287337 | text='Datenschutzbeauftragte'
+  [Text] name='Gleichschenkliges Dreieck 1' | left=5331384, top=2799756, w=3837648, h=420068 | text=''
+  [Text] name='Textfeld 8' | left=7458635, top=5070154, w=4398403, h=1428253 | text='Wir empfehlen eine Projektleitung aus zwei Personen! Warum? | Risiken minimie...'
+  [Text] name='Ellipse 3' | left=5151827, top=646055, w=2732946, h=1628644 | text='Projektorganisation anpassen'
+  [Shape:PICTURE (13)] name='Grafik 22' | left=2454783, top=2805566, w=842375, h=842375
+  [Shape:PICTURE (13)] name='Julia' | left=3785584, top=2778278, w=842375, h=842375
+  [Text] name='Ellipse 24' | left=9465332, top=224118, w=2214282, h=864907 | text='Nur wenn sinnvoll'
+  [Text] name='Datumsplatzhalter 10' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 12' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [11] (Layout: Titel und Inhalt) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 2' | left=336000, top=368300, w=11520000, h=430887 | text='Geplantes mesakumo Projektteam für KUNDE'
+  [Text] name='Fußzeilenplatzhalter 3' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+  [Text] name='Datumsplatzhalter 4' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Shape:GROUP (6)] name='Gruppieren 40' | left=334963, top=1082687, w=5680076, h=5102214
+  [Shape:GROUP (6)] name='Gruppieren 41' | left=6176962, top=1089025, w=5680076, h=5102214
+  [Text] name='Ellipse 1' | left=9124092, top=1710239, w=2732946, h=1628644 | text='Projektteam anpassen'
+
+--- Slide [12] (Layout: Agenda with Image) ---
+  [Text] name='Bildplatzhalter 1' | left=4227874, top=372916, w=7632000, h=4176000 | text=''
+  [Text] name='Textplatzhalter 4' | left=371480, top=2600325, w=5598000, h=3584575 | text='Projektdetails | Ausgangssituation | Lösung mit bewährter Vorgehensweise | Wi...'
+  [Text] name='Ellipse 5' | left=7324405, top=1286536, w=2732946, h=1628644 | text='Bild Kunde'
+  [Text] name='Datumsplatzhalter 6' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 7' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [13] (Layout: Title and Two Content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Inhaltsplatzhalter 7' | left=334963, top=1090800, w=5688000, h=5076000 | text=''
+  [Text] name='Titel 5' | left=336000, top=368300, w=11520000, h=430887 | text='Unser Angebot'
+  [Text] name='Rectangle 40' | left=334962, top=1089026, w=5688001, h=5095874 | text='Projekttitel |  | Zielsetzung von Business Intelligence | Zielorganisation fü...'
+  [Text] name='Rechteck 9' | left=6167439, top=4550029, w=5689599, h=1634871 | text='Manager Dominik Brosa  wird mit seiner/ihrer langjährigen Erfahrung die Proje...'
+  [Text] name='Rechteck 10' | left=6167438, top=1089024, w=5689599, h=3326222 | text='41 WochenProjektlaufzeit bis 31.01.25'
+  [Shape:PICTURE (13)] name='Grafik 11' | left=6468466, top=1223807, w=755703, h=755703
+  [Shape:PICTURE (13)] name='Dominik' | left=5855928, top=4727695, w=1318925, h=1318925
+  [Text] name='Ellipse 1' | left=9642756, top=186167, w=2214282, h=864907 | text='Variante 1'
+  [Text] name='Datumsplatzhalter 4' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 6' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [14] (Layout: Image Left full height and content) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Bildplatzhalter 1' | left=336843, top=368300, w=3744001, h=6121400 | text=''
+  [Text] name='Titel 2' | left=4222962, top=368300, w=7632000, h=430887 | text='Spezifische Angebotsbedingungen'
+  [Text] name='Rectangle 12' | left=4840015, top=3482333, w=7017023, h=1106054 | text='Spesen und Reisekosten | Übliche Reisekosten, Spesen und sonstige Nebenkosten...'
+  [Text] name='Rectangle 12' | left=4829634, top=4651513, w=7017023, h=666410 | text='Leistungsbeschreibung und Ihre Mitarbeit | Gemäß Beschreibung auf S. 2-7 des ...'
+  [Text] name='Rectangle 12' | left=4829634, top=5396488, w=7017023, h=936990 | text='Projektstandort | Die Workshops und einige der Interviews werden voraussichtl...'
+  [Text] name='Rectangle 12' | left=4840015, top=1792483, w=7017023, h=1576627 | text='Vergütung | Die Leistungen werden nach tatsächlich erbrachten Stunden zum ver...'
+  [Text] name='Rectangle 12' | left=4840015, top=943369, w=7017023, h=770549 | text='Projektzeitraum | 10 Wochen ab voraussichtlich 01.02.2023'
+  [Shape:GROUP (6)] name='Gruppieren 11' | left=3277911, top=937730, w=1438056, h=776188
+  [Shape:GROUP (6)] name='Gruppieren 14' | left=3286315, top=1811195, w=1438056, h=1557812
+  [Shape:GROUP (6)] name='Gruppieren 17' | left=3277911, top=3486769, w=1438056, h=1101618
+  [Shape:GROUP (6)] name='Gruppieren 20' | left=3267530, top=5408958, w=1438056, h=932775
+  [Text] name='Ellipse 23' | left=534584, top=1740363, w=2732946, h=1628644 | text='Bild Kunde'
+  [Shape:GROUP (6)] name='Gruppieren 24' | left=3267530, top=4649445, w=1438056, h=666411
+  [Text] name='Ellipse 30' | left=9642756, top=186167, w=2214282, h=864907 | text='Variante 1'
+  [Text] name='Datumsplatzhalter 5' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 27' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+
+--- Slide [15] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 6' | left=336000, top=368300, w=11520000, h=430887 | text='Allgemeine Geschäftsbedingungen (1)'
+  [Text] name='Datumsplatzhalter 3' | left=334963, top=6607462, w=621965, h=146194 | text='AN000520'
+  [Text] name='Fußzeilenplatzhalter 4' | left=1095692, top=6607462, w=3916744, h=146194 | text='Münchner Leukämie Labor | IT-Zielbild und Umsetzungsfahrplan'
+  [Text] name='Freeform 27' | left=152727, top=1681034, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=334962, top=1089026, w=11522075, h=978357 | text='Sämtliche Leistungen von mesakumo sind Dienstleistungen gemäß § 611 ff. BGB. ...'
+  [Text] name='Pentagon 23' | left=155775, top=1190194, w=1521950, h=524600 | text='1. Leistungen'
+  [Text] name='Freeform 27' | left=152728, top=2767764, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=334963, top=2175754, w=11522075, h=2343591 | text='mesakumo räumt dem Kunden an den für ihn erstellten Arbeitsergebnissen ein ei...'
+  [Text] name='Pentagon 23' | left=155776, top=2276924, w=1521949, h=524600 | text='2. Nutzung von
+        Ergebnissen'
+  [Text] name='Freeform 27' | left=151690, top=5195195, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=333925, top=4603186, w=11522075, h=897095 | text='Die Parteien verpflichten sich zum Schutz vertraulicher Informationen einer j...'
+  [Text] name='Pentagon 23' | left=154738, top=4704355, w=1522987, h=524600 | text='3. Vertraulichkeit'
+  [Text] name='Freeform 27' | left=151690, top=6177997, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=333925, top=5585989, w=11522075, h=897096 | text='Rechnungen werden zum Ende jedes Monats, respektive nach Projektabschluss, ge...'
+  [Text] name='Pentagon 23' | left=154738, top=5687157, w=1578646, h=524600 | text='4.  Zahlungs-
+        bedingungen'
+
+--- Slide [16] (Layout: Nur Titel) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Allgemeine Geschäftsbedingungen (2)'
+  [Text] name='Freeform 27' | left=152727, top=1681034, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=334962, top=1089026, w=11522075, h=906707 | text='Der Kunde hat das Recht, diesen Vertrag mit einer Frist von einem Monat zu kü...'
+  [Text] name='Pentagon 23' | left=155775, top=1190194, w=1521950, h=524600 | text='5. Kündigung'
+  [Text] name='Freeform 27' | left=160965, top=2697336, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=343200, top=2105327, w=11522075, h=897095 | text='Zwischen mesakumo und dem Kunden wird vereinbart, dass während der Projektlau...'
+  [Text] name='Pentagon 23' | left=164013, top=2206496, w=1594549, h=524600 | text='6. Abwerbeverbot'
+  [Text] name='Freeform 27' | left=151690, top=3704025, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=333925, top=3112016, w=11522075, h=1224406 | text='Die Haftung von mesakumo ist insgesamt auf die unter diesem Vertrag erhaltene...'
+  [Text] name='Pentagon 23' | left=154738, top=3213185, w=1594549, h=524600 | text='7. Haftung'
+  [Text] name='Freeform 27' | left=157917, top=5058551, w=331035, h=307747 | text=''
+  [Text] name='Rectangle 40' | left=340152, top=4466542, w=11522075, h=984885 | text='Der Vertrag unterliegt deutschem Recht.'
+  [Text] name='Pentagon 23' | left=160965, top=4567711, w=1594549, h=524600 | text='8. Rechtsraum'
+  [Text] name='Datumsplatzhalter 16' | left=334963, top=6607462, w=609141, h=146194 | text='AN000XXX'
+  [Text] name='Fußzeilenplatzhalter 17' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname| Projekttitel'
+
+--- Slide [17] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Shape:PICTURE (13)] name='Picture 3' | left=566211, top=5032752, w=1312501, h=371270
+  [Shape:PICTURE (13)] name='Picture 5' | left=3360949, top=4653666, w=1570935, h=891522
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Unser Angebot für KUNDE'
+  [Text] name='Datumsplatzhalter 2' | left=334963, top=6607462, w=621965, h=146194 | text='AN00345'
+  [Text] name='Fußzeilenplatzhalter 3' | left=1095692, top=6607462, w=3916744, h=146194 | text='Kundenname | Projekttitel'
+  [Text] name='Rectangle 40' | left=336926, top=1089025, w=5687638, h=5231398 | text='Sofern Sie mit den Bedingungen dieses Angebots einverstanden sind, bitten wir...'
+  [Text] name='Textfeld 1' | left=479155, top=3258046, w=11519999, h=3154710 | text='|  |
+        Akzeptiert durch KUNDE: |  |  |                  ________________________ |  Ulm, D...'
+  [Shape:PICTURE (13)] name='KuchenMeister' | left=6596409, top=2273174, w=2303463, h=984872
+  [Shape:PICTURE (13)] name='Picture 3' | left=565975, top=5099427, w=1312737, h=371337
+  [Shape:PICTURE (13)] name='Picture 5' | left=3360949, top=4738145, w=1571217, h=891682
+  [Text] name='Ellipse 6' | left=7324405, top=1286536, w=2732946, h=1628644 | text='Logo Kunde'
+
+--- Slide [18] (Layout: Nur Titel) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text=''
+  [Text] name='GreyBox+Arrow' | left=-1, top=0, w=5261551, h=6858000 | text=''
+  [Text] name='Title 5' | left=303917, top=3213227, w=5098149, h=430887 | text='Eine Auswahl unserer zufriedenen Kunden'
+  [Shape:PICTURE (13)] name='Grafik 18' | left=6209945, top=471536, w=1025578, h=493915
+  [Shape:PICTURE (13)] name='Grafik 33' | left=4964590, top=1417142, w=1592146, h=526891
+  [Shape:PICTURE (13)] name='Grafik 36' | left=7269015, top=3252244, w=1292958, h=452716
+  [Shape:PICTURE (13)] name='Grafik 37' | left=6811532, top=4868113, w=2354913, h=424586
+  [Shape:PICTURE (13)] name='Grafik 38' | left=10566908, top=4880737, w=1378744, h=399338
+  [Shape:PICTURE (13)] name='Grafik 39' | left=10819182, top=5694981, w=1029914, h=430586
+  [Shape:PICTURE (13)] name='Grafik 41' | left=10827162, top=3214065, w=1059045, h=529074
+  [Shape:PICTURE (13)] name='Grafik 42' | left=4892095, top=5665680, w=1259146, h=489188
+  [Shape:PICTURE (13)] name='Grafik 43' | left=9386237, top=5796767, w=1107388, h=227015
+  [Shape:PICTURE (13)] name='Grafik 44' | left=9228743, top=1326638, w=1179830, h=707898
+  [Shape:PICTURE (13)] name='Bobst' | left=5587666, top=3384422, w=1400317, h=185648
+  [Shape:PICTURE (13)] name='Grafik 46' | left=9084212, top=593334, w=1894307, h=250319
+  [Shape:PICTURE (13)] name='Grafik 47' | left=8318788, top=1358823, w=643528, h=643528
+  [Shape:PICTURE (13)] name='Merz Lifecare' | left=8685434, top=4137921, w=1193361, h=303716
+  [Shape:PICTURE (13)] name='Bonvita' | left=7669832, top=5665669, w=1390848, h=489210
+  [Shape:PICTURE (13)] name='MUNK' | left=4871400, top=348261, w=1036650, h=740464
+  [Shape:PICTURE (13)] name='Picture 2' | left=5315537, top=3945815, w=1275484, h=687928
+  [Shape:PICTURE (13)] name='Zehnder' | left=11177303, top=377797, w=681393, h=681393
+  [Shape:PICTURE (13)] name='Wiemann' | left=10249331, top=2352352, w=1599765, h=471906
+  [Shape:PICTURE (13)] name='Bauder' | left=10674998, top=1491521, w=1182040, h=378133
+  [Shape:PICTURE (13)] name='Grafik 55' | left=5184329, top=2377778, w=2051194, h=421055
+  [Shape:PICTURE (13)] name='Grafik 56' | left=5109096, top=4959974, w=1547298, h=240865
+  [Shape:PICTURE (13)] name='Grafik 57' | left=6873528, top=4157948, w=1529399, h=263662
+  [Shape:PICTURE (13)] name='Grafik 59' | left=8789675, top=2388235, w=1270289, h=400141
+  [Shape:PICTURE (13)] name='Grafik 60' | left=10161303, top=4086526, w=1695735, h=269664
+  [Shape:PICTURE (13)] name='KuchenMeister' | left=6823163, top=1417808, w=1229198, h=525558
+  [Shape:PICTURE (13)] name='Picture 14' | left=8920420, top=3382439, w=1548295, h=192327
+  [Shape:PICTURE (13)] name='Optima' | left=9321583, top=4970962, w=1090188, h=218889
+  [Shape:PICTURE (13)] name='Grafik 2049' | left=6476798, top=5571958, w=867477, h=676632
+  [Shape:PICTURE (13)] name='Grafik 2050' | left=7424891, top=2347661, w=1175416, h=481288
+  [Text] name='Datumsplatzhalter 3' | left=334963, top=6607462, w=618759, h=146194 | text='09.10.2026'
+  [Text] name='Fußzeilenplatzhalter 4' | left=1095692, top=6607462, w=3916744, h=146194 | text='Künstliche Intelligenz im Oktober 2026: Stand, Chancen, Perspektiven'
+  [Shape:PICTURE (13)] name='Grafik 7' | left=7638227, top=437249, w=1137419, h=562489
+
+--- Slide [19] (Layout: Title Only) ---
+  [Shape:EMBEDDED_OLE_OBJECT (7)] name='thinkcell data - do not delete' | left=1588, top=1588, w=1588, h=1588
+  [Shape:PICTURE (13)] name='Grafik 4' | left=334963, top=1089024, w=11522076, h=5400675
+  [Text] name='Rechteck 20' | left=8903833, top=1313950, w=2742133, h=3080250 | text=''
+  [Text] name='Titel 1' | left=336000, top=368300, w=11520000, h=430887 | text='Melden Sie sich jederzeit gerne'
+  [Shape:GROUP (6)] name='Gruppieren 5' | left=9004058, top=1567824, w=5389594, h=1387296
+  [Shape:PICTURE (13)] name='Grafik 9' | left=9054883, top=2814756, w=1228488, h=1228488
+  [Text] name='Datumsplatzhalter 18' | left=334963, top=6607462, w=618759, h=146194 | text='11.03.2025'
+  [Text] name='Fußzeilenplatzhalter 19' | left=1095692, top=6607462, w=3916744, h=146194 | text='IT-Effizienzprogramm für KUNDE'
+  [Shape:GROUP (6)] name='Gruppieren 29' | left=546034, top=1313950, w=5489819, h=3080250
+  [Shape:PICTURE (13)] name='Grafik 10' | left=730120, top=2814756, w=1228488, h=1228488
+
+--- Slide [20] (Layout: Full Blank) ---
+  [Shape:PICTURE (13)] name='Grafik 1' | left=334961, top=368301, w=11522075, h=6121400
+  [Shape:PICTURE (13)] name='Grafik 2' | left=2560320, top=4123922, w=7214235, h=2888239
