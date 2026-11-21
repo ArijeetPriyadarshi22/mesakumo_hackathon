@@ -172,6 +172,10 @@ def render_review(service, draft, directory, inventory, scope, fresh):
                            mime='text/csv; charset=utf-8')
         st.button('Continue to Proposal Draft', on_click=lambda: st.session_state.update(page='Proposal Draft'))
     else:
+        if issue:
+            st.caption(f'Approval is blocked: {issue}')
+        elif not fresh:
+            st.caption('Approval is blocked because the selected evidence files changed or could not be verified.')
         with st.form(f"approve_evidence:{scope}:{draft['review_revision']}"):
             reviewer = st.text_input('Evidence reviewer')
             acknowledge = st.checkbox('I acknowledge open No match items')
@@ -188,12 +192,15 @@ def proposal_handoff(store, project, rows, directory):
         if service is not None and not service.requirements:
             st.info('This checklist has no proposal requirements for drafting.')
             return
-        approved = service.current(directory, evidence_inventory()) if service else None
+        inventory = evidence_inventory() if service else None
+        approved = service.current(directory, inventory) if service else None
         if approved:
             draft = approved['review']
             st.success(f"Received approved evidence review revision {draft['review_revision']} "
                        f"for checklist revision {draft['checklist_revision']} · {draft['phase']} · "
                        f"{len(draft['rows'])} requirements")
+            from .proposal import proposal_view
+            proposal_view(store, approved, project.name, directory=directory, inventory=inventory)
         else:
             st.warning('Proposal Draft is locked. Approve and Save Evidence for the current inputs first.')
     except (OSError, ValueError) as exc:

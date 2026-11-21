@@ -11,7 +11,7 @@ from mesakumo.checklist import ChecklistReview
 from mesakumo.discovery import ROOT, open_selection, participant_directory
 from mesakumo.evidence import EVIDENCE_ROLES, evidence_inventory, read_evidence
 from mesakumo.persistence import ProjectStore
-from mesakumo.models import ModelUnavailable
+from mesakumo.models import ModelUnavailable, RequestyModel
 from mesakumo.evidence_review import COLUMNS, EvidenceReview
 
 MAIN_DECK = 'Input Angebote_Referenzen und Beraterprofile.pptx'
@@ -201,8 +201,39 @@ class EvidenceTests(unittest.TestCase):
                 self.assertEqual(evidence_source['document_id'], draft['corpus'][pid]['document_id'])
                 self.assertEqual(evidence_source['location'], 'Slide 2')
                 self.assertEqual(review.current(store.load(project.id), rows)['csv'], approved['csv'])
-                widget('button', 'Continue to Proposal Draft').click().run()
-                self.assertTrue(any('Received approved evidence' in item.value for item in app.success))
+                import httpx
+                from mesakumo.proposal import DRAFTING_SYSTEM, SCHEMA
+
+                drafting_calls = []
+
+                def draft_response(request):
+                    body = json.loads(request.content)
+                    drafting_calls.append(body)
+                    self.assertEqual(body['messages'][0]['content'], DRAFTING_SYSTEM)
+                    self.assertEqual(body['response_format'], {'type': 'json_schema', 'json_schema': {
+                        'name': 'proposal_section', 'strict': True, 'schema': SCHEMA,
+                    }})
+                    self.assertEqual(body['max_tokens'], 3000)
+                    self.assertIn('Project evidence', body['messages'][1]['content'])
+                    answer = {'title': 'Projektreferenz',
+                              'text': 'Die Projektreferenz liegt vor. [OFFEN: Verfügbarkeit bestätigen]',
+                              'used_citations': ['Q1']}
+                    return httpx.Response(200, json={'choices': [{
+                        'index': 0, 'finish_reason': 'stop',
+                        'message': {'role': 'assistant', 'content': json.dumps(answer)},
+                    }]})
+
+                with httpx.Client(transport=httpx.MockTransport(draft_response)) as http_client:
+                    model = RequestyModel('https://router.eu.requesty.ai/v1', 'fixture', 'dummy-key',
+                                          http_client=http_client)
+                    with patch('mesakumo.ui.proposal.configured_model', return_value=model):
+                        widget('button', 'Continue to Proposal Draft').click().run()
+                        self.assertTrue(any('Received approved evidence' in item.value for item in app.success))
+                        self.assertEqual(drafting_calls, [])
+                        widget('button', 'Draft this section').click().run()
+                        self.assertFalse(app.exception)
+                        self.assertEqual(len(drafting_calls), 1)
+                        self.assertEqual(widget('text_input', 'Section title').value, 'Projektreferenz')
 
                 app = AppTest.from_file('mesakumo/streamlit_app.py').run()
                 widget('selectbox', 'Phase').select('offer').run()

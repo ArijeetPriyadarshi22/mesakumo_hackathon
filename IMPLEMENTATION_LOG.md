@@ -1,5 +1,32 @@
 # Implementation history
 
+## Page 4 — Final Review & Export — 21 November 2026
+
+- Page 4 reuses the current Page 3 package check. It shows the approved
+  sections with citations, excluded requirements and unresolved items,
+  keeps the package CSV and JSON, and links back to Proposal Draft.
+- A local PowerPoint renderer uses the actual `Angebotstemplate.pptx` cover
+  and title/content layouts. It copies template artwork, logo and theme,
+  leaves example slide data out of the output, paginates the approved text,
+  and maps each section and its citations in speaker notes. We inspected
+  `origin/vika-changes` without checking it out. Its model-dependent export
+  and field-specific schema were not reused.
+- Page 4 saves the draft preview bytes in SQLite. A named final reviewer
+  approves the checksum of those bytes. Unresolved included items and
+  excluded required or unclassified requirements block approval. Current
+  approval and template checks run again at the preview-save and approval
+  transactions. Stale inputs require a new preview and approval.
+- Verification: 98 automated tests and the offline HTTP smoke test passed.
+  The synthetic Streamlit flow used the actual template and checked Page 3
+  approval through preview, final approval, download and reopen. Tests
+  compared exact download bytes, recovered complete paginated text, checked
+  relationships, notes and template assets, and rejected example content,
+  blocked approval, missing or invalid templates and stale inputs.
+  All seven slides of a synthetic QA deck were visually inspected with
+  Quick Look. No PowerPoint or live model session was used.
+- This milestone exports PPTX. Word export remains outside scope until
+  an official DOCX template is selected.
+
 ## Page 2 milestone C — 21 November 2026 — complete
 
 - Page 2 now displays one reviewed row per approved requirement, the six

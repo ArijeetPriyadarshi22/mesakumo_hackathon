@@ -145,4 +145,5 @@ elif page == pages[1]:
 elif page == pages[2]:
     proposal_handoff(store, project, rows, directory)
 else:
-    st.info('Final proposal review and corporate export are not implemented.')
+    from mesakumo.ui.proposal import final_review_handoff
+    final_review_handoff(store, project, rows, directory)

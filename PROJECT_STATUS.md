@@ -1,8 +1,7 @@
 # Current implementation state
 
-Updated 21 November 2026. Page 2 milestones A through C are complete. Reviewers can
-match, edit and approve evidence against the approved checklist, then
-download a separate reviewed evidence CSV.
+Updated 21 November 2026. Pages 1 through 4 now support the Streamlit
+flow from tender requirements to a reviewed corporate PPTX.
 
 Launch with `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
 The legacy CLI remains available separately via `.venv/bin/python -m mesakumo`.
@@ -35,12 +34,12 @@ No match rows and source coverage gaps can be acknowledged during approval.
 
 Evidence approval and its UTF-8 CSV are stored atomically in SQLite. The CSV
 has one row per requirement, matches the review table, and carries gap/action
-notes and structured citations. Page 3 confirms receipt only while the Page 1
-approval, evidence review, selection and selected document versions are current.
+notes and structured citations. Page 3 drafts and reviews sections for a current checklist and evidence approval.
+It keeps gaps open until a reviewer records their resolution and requires
+citation reconfirmation when prose is edited.
 Reopen the same workspace by enabling `MESAKUMO_KEEP_SESSION=yes`.
 
-Automated and scripted checks: all 62 tests and the legacy HTTP smoke test
-passed. The Streamlit flow verified editing, downloads, reopen, rollback and
+Earlier Page 2 automated and scripted checks and the legacy HTTP smoke test passed. The Streamlit flow verified editing, downloads, reopen, rollback and
 approval invalidation. The main reference deck yielded 64 text passages in the
 local citation check. The earlier inventory audit read 16 of 19 eligible files,
 with three PDFs flagged for textless pages.
@@ -49,5 +48,22 @@ The milestone B live synthetic Requesty check passed. Milestone C used scripted
 matching and local files. Real tender grading and visual browser QA remain
 unverified.
 
-Remaining work includes OCR, real tender grading validation, proposal drafting
-and corporate export. Page 3 is limited to the approved evidence handoff.
+Page 4 reviews the current approved package and retains its JSON and CSV.
+It renders the provided `Angebotstemplate.pptx` locally with branding,
+continuation slides and source notes. The preview remains available with
+open items. The final download requires a named approval of the exact
+preview bytes and is blocked by unresolved included items or omitted
+required or unclassified proposal requirements. Changes to the template,
+sections or upstream approvals require a current preview and approval.
+The branch exporter from `vika-changes` was inspected and was not reused
+because its normal rendering path calls a model and expects a different schema.
+
+Latest verification: 98 tests and the HTTP smoke test passed. The synthetic
+Streamlit flow used the supplied template. Tests verified exact preview
+and approved download bytes, reopening, stale inputs, template failures,
+content preservation, citation notes, branding assets and sample cleanup.
+All seven slides of a synthetic QA export were inspected in Quick Look.
+PowerPoint and a real tender export were not exercised for this milestone.
+
+Remaining work includes OCR, grading validation on real tenders and Word
+export once an official DOCX template is available and selected.

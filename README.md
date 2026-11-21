@@ -1,3 +1,39 @@
+## Page 4 — Final Review & Export
+
+Approve the proposal package on **Proposal Draft**, then choose **Continue to
+Final Review & Export**. Page 4 shows the package revision, approved sections,
+citations, excluded requirements and open items. Its CSV and JSON are still
+available. Use **Back to Proposal Draft** to make corrections.
+
+**Generate draft preview** renders the saved proposal locally using
+`Angebotstemplate.pptx` from the participant folder. The preview download is
+labeled as draft and retains open-item markers. The renderer uses the
+template's branded cover and title-and-content layouts, keeps complete
+approved text across continuation slides and records section IDs and citations
+in speaker notes. It leaves example content and unused slides out of the
+output. The template is read from a copy in memory. No model is called.
+
+After reviewing the preview, enter a reviewer name and select **Approve
+rendered PPTX**. Unresolved items in included sections and excluded mandatory
+or unclassified proposal requirements block final approval. SQLite stores the
+exact rendered bytes and their checksum. The approved download returns those
+same bytes. A changed section, upstream approval, or template requires a new
+current preview and approval.
+
+The challenge brief mentions Word. This milestone produces PPTX from the
+supplied reference template. No official DOCX template was selected.
+The local `vika-changes` exporter was inspected. Its export path uses an LLM
+and a different slide schema, so Page 4 uses a deterministic exporter.
+
+Verification used a synthetic approved proposal and the actual supplied
+template. The automated checks covered the Page 3 to Page 4 flow, preview
+and approved download equality, reopen, stale inputs, missing or invalid
+templates, and sample-content cleanup. All seven slides in a separate
+synthetic QA deck were visually checked in macOS Quick Look. PowerPoint
+itself was not used for validation.
+
+---
+
 ## Page 2 milestone C — evidence review and approval
 
 From Evidence Matching, choose **Read evidence and its sources** to inspect
