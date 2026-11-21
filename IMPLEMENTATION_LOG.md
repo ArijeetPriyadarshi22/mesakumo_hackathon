@@ -220,3 +220,37 @@ leave paraphrases for human review. Partial runs restore as-is; failed retries
 start a bounded fresh attempt while preserving already accepted checklist records.
 No new OCR, XLSX/AIDF reader, evidence matching, draft generation or export.
 Stopped after Task 2. Test Streamlit server stopped after launch verification.
+
+## 2026-11-21 — Follow-up: simplify Requesty setup to match Team 1 guide
+
+Replaced manual urllib request construction/retry parsing with OpenAI SDK client
+and client.chat.completions.create(), matching the provided access document.
+Added direct REQUESTY_API_KEY support (document's variable), while preserving
+legacy MESAKUMO settings and the previously authorized local document fallback.
+An explicit key skips document parsing; explicit disabled/approval flags are
+respected. Secrets stay outside tracked files. Endpoint restriction, no redirects,
+45-second timeout, two retries, finish/content validation and sanitized errors
+remain. SDK owns retry timing and auth/JSON transport. Response size is checked
+after SDK decoding; it is no longer a hard streaming byte cap. This tradeoff is
+recorded in README. Agent JSON actions and persistent runs are unchanged.
+
+Changed: mesakumo/models.py, tests/test_documents_requirements.py, requirements.txt,
+pyproject.toml, .env.example, README.md, PROJECT_STATUS.md, IMPLEMENTATION_LOG.md.
+Added openai==2.8.1; tests use HTTPX MockTransport to verify actual SDK requests,
+retry counts, sanitized failures, redirects, unfinished responses and documented
+environment name. Official SDK example checked at https://github.com/openai/openai-python.
+
+Checks:
+- `.venv/bin/python -m unittest discover -s tests -v`: 31 PASS; synthetic fixtures,
+  scripted agent, SDK transport mocks and Streamlit AppTest. No Requesty key needed.
+- `.venv/bin/python tests/http_smoke.py`: PASS synthetic actual-loopback legacy
+  workflow including process restart/reopen and disabled model failure.
+- Live minimal SDK probe with authorized local Team 1 key: Requesty HTTP 403.
+  No credentials/response bodies logged; no live extraction success claimed.
+- `git diff --check`: PASS. Actual-document parsing/scoping was not repeated for
+  this transport-only follow-up; prior local checks remain documented above.
+
+Manual check/launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
+Set REQUESTY_API_KEY privately as in the supplied guide, open page 1, choose a pack,
+retry a saved failure if present, and refresh to confirm restoration/no extra calls.
+Remaining blocker: Requesty gateway/model access returns HTTP 403. No Task 3 work.

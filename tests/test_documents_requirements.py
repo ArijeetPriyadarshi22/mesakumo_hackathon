@@ -4,7 +4,8 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from urllib.error import HTTPError
+import httpx
+from unittest.mock import patch
 from mesakumo.domain import Project
 from mesakumo.documents import intake, LocalProcessor
 from mesakumo.persistence import ProjectStore
@@ -120,30 +121,47 @@ class DocumentsRequirementsTests(unittest.TestCase):
 
 class ProviderBoundaryTests(unittest.TestCase):
     def test_request_contract_and_retry(self):
-        class Opener:
-            calls = 0
-            def open(inner, request, timeout):
-                inner.calls += 1
-                self.assertEqual(request.full_url, 'https://router.eu.requesty.ai/v1/chat/completions')
-                self.assertEqual(request.headers['Authorization'], 'Bearer fixture-key')
-                self.assertEqual(timeout, 45)
-                self.assertEqual(json.loads(request.data)['model'], 'fixture-approved-claude')
-                if inner.calls < 3:
-                    raise HTTPError(request.full_url, 503, 'unavailable', {}, None)
-                return io.BytesIO(json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'content': '{}'}}]}).encode())
-        opener = Opener()
-        model = RequestyModel('https://router.eu.requesty.ai/v1', 'fixture-approved-claude', 'fixture-key', opener=opener, sleep=lambda _: None)
-        self.assertEqual(model.complete('Synthetic prompt'), '{}')
-        self.assertEqual(opener.calls, 3)
+        calls = []
+        def handler(request):
+            calls.append(request)
+            self.assertEqual(str(request.url), 'https://router.eu.requesty.ai/v1/chat/completions')
+            self.assertEqual(request.headers['Authorization'], 'Bearer fixture-key')
+            self.assertEqual(request.extensions['timeout']['read'], 45)
+            self.assertEqual(json.loads(request.content)['model'], 'fixture-approved-claude')
+            if len(calls) < 3:
+                return httpx.Response(503, json={'error': {'message': 'unavailable'}})
+            return httpx.Response(200, json={'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': '{}'}}]})
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client, patch('time.sleep'):
+            model = RequestyModel('https://router.eu.requesty.ai/v1', 'fixture-approved-claude', 'fixture-key', http_client=client)
+            self.assertEqual(model.complete('Synthetic prompt'), '{}')
+        self.assertEqual(len(calls), 3)
 
     def test_no_unapproved_endpoint_or_leaked_http_body(self):
         with self.assertRaises(ModelUnavailable):
             RequestyModel('https://other.example/v1', 'model', 'fixture-key')
-        class Opener:
-            def open(self, request, timeout):
-                raise HTTPError(request.full_url, 401, 'secret body', {}, None)
-        model = RequestyModel('https://router.eu.requesty.ai/v1', 'approved-model', 'fixture-key', opener=Opener())
-        with self.assertRaises(ModelUnavailable) as context:
-            model.complete('Private content')
+        def handler(request):
+            return httpx.Response(401, json={'error': {'message': 'secret body fixture-key'}})
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            model = RequestyModel('https://router.eu.requesty.ai/v1', 'approved-model', 'fixture-key', http_client=client)
+            with self.assertRaises(ModelUnavailable) as context:
+                model.complete('Private content')
         self.assertNotIn('secret body', str(context.exception))
         self.assertNotIn('fixture-key', str(context.exception))
+
+    def test_sdk_rejects_redirects_and_unfinished_output(self):
+        for status, data in [(302, None), (200, {'choices':[{'index':0, 'finish_reason':'length', 'message': {'role':'assistant','content':'partial'}}]})]:
+            with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status, headers={'location':'https://other.example'}, json=data)), follow_redirects=False) as client:
+                model = RequestyModel('https://router.eu.requesty.ai/v1', 'model', 'fixture-key', http_client=client)
+                with self.assertRaises(ModelUnavailable): model.complete('prompt')
+
+    def test_document_environment_name(self):
+        from mesakumo.models import configured_model, configure_team_one
+        import os
+        with patch.dict(os.environ, {'REQUESTY_API_KEY':'fixture-key'}, clear=True):
+            configure_team_one()  # Explicit key takes precedence over local document.
+            model = configured_model()
+            self.assertIsInstance(model, RequestyModel)
+            self.assertEqual(model.model, 'bedrock/claude-haiku-4-5@eu-west-1')
+            model.client.close()
+        with patch.dict(os.environ, {'REQUESTY_API_KEY':'fixture-key','MESAKUMO_LLM_PROVIDER':'disabled'}, clear=True):
+            self.assertIsInstance(configured_model(), DisabledModel)

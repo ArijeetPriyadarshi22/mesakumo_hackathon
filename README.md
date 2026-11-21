@@ -1,3 +1,39 @@
+# Simplified Requesty setup (21 November 2026)
+
+The adapter now follows the Team 1 document's OpenAI SDK example:
+
+```python
+client = OpenAI(base_url="https://router.eu.requesty.ai/v1", api_key=api_key)
+response = client.chat.completions.create(model=model, messages=messages)
+```
+
+To use the document's environment-variable setup, set `REQUESTY_API_KEY` privately
+in your terminal before launching. This takes precedence over the local document
+loader; no document parsing is needed when that variable is set. The existing
+`MESAKUMO_LLM_API_KEY` configuration and local Team 1 document fallback still work.
+Explicit disabled-provider or approval settings remain respected.
+
+```sh
+export REQUESTY_API_KEY="<your Team 1 key>"
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+```
+
+The SDK supplies authentication, JSON transport and two automatic retries, with a
+45-second timeout. The adapter still restricts the endpoint to Requesty EU, disables
+redirect following, and validates finish status/content. The 2 MB response limit is
+checked after SDK decoding, rather than bounding bytes during transport. SDK HTTPS
+uses verified certificates. No native tools were added; LangGraph still routes JSON
+actions. See the [official SDK usage](https://github.com/openai/openai-python).
+
+Manual check: open page 1 with the key configured, select a pack and inspect status.
+If a saved failure exists, click Retry failed extraction. Refreshing must restore
+the result without another call. The live SDK check still returned HTTP 403; this
+change does not establish working gateway access. All 31 synthetic/unit tests and
+the legacy HTTP integration smoke pass.
+
+---
+
 # Task 2: LangGraph requirements agent (21 November 2026)
 
 Launch from the repository root:
@@ -188,8 +224,8 @@ OpenAI-compatible POST `/chat/completions`, `Authorization: Bearer …`, message
 model, and `choices[0].message.content`. EU gateway handling does **not** by itself
 ensure EU inference: use Mesakumo's approved EU model or restricted routing policy.
 The implementation rejects other base URLs and HTTP redirects. Provider calls
-have 45-second socket timeouts, at most three attempts, and 1/2-second backoff
-on rate limits, transient server errors or connection failures. Model errors
+have 45-second socket timeouts, at most three attempts using SDK backoff
+on retryable status codes or connection failures. Model errors
 omit credentials, response bodies and source content. Requests are synchronous.
 
 Extraction sends only current tender passages, with instructions to treat content

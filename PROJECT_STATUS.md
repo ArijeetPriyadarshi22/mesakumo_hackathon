@@ -15,7 +15,7 @@ process locks prevent rerun/tab duplicates; failed/interrupted runs require expl
 retry. Internal partner guidance is excluded. Team 1 local credentials load in
 memory only unless provider configuration is already set; disabled mode is supported.
 
-Verification: 29 automated tests pass including scripted reference-following,
+Verification: 31 automated tests pass including scripted reference-following,
 attachment citation, invalid citations, partial coverage, zero candidates, locks,
 interruption/retry, long passage bounds and Streamlit reopen without model calls.
 Legacy HTTP smoke passes; Streamlit starts on loopback. Actual tender source scoping
@@ -32,3 +32,11 @@ No OCR/XLSX/AIDF parsing added; unsupported sources count as coverage gaps. Part
 runs restore as-is. Reading/processing coverage does not establish completeness.
 No visual browser QA. Participant materials remain local/ignored; existing staged
 index removals and prior Git history are preserved. No Task 3 work performed.
+
+
+21 November 2026 adapter simplification: RequestyModel now uses the official
+OpenAI SDK as shown in the Team 1 guide. REQUESTY_API_KEY is supported directly;
+local document fallback and legacy configuration remain. SDK owns auth/JSON/retries;
+EU endpoint restriction, redirect rejection and response validation retained.
+Response size is checked after SDK decoding. 31 tests and HTTP smoke pass; live
+SDK probe still HTTP 403. No later milestone implemented.
