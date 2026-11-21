@@ -119,4 +119,4 @@ class TenderOverviewTests(unittest.TestCase):
                 next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()
                 self.assertFalse(app.exception)
                 self.assertTrue(any('ungültigen Quellenverweis' in item.value for item in app.warning))
-                self.assertIn('Drei Workshops durchführen', app.dataframe[0].value['statement'].tolist())
+                self.assertIn('Drei Workshops durchführen', app.dataframe[0].value['requirement'].tolist())

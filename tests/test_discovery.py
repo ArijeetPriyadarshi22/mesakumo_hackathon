@@ -40,7 +40,7 @@ class DiscoveryTests(unittest.TestCase):
                 self.assertFalse(app.exception)
                 self.assertEqual(app.title[0].value, 'Tender Requirements')
                 self.assertEqual(list(app.dataframe[0].value.columns),
-                    ['statement','category','obligation_level','exact_constraints','source_references','requirement_id'])
+                    ['requirement','category','obligation_level','exact_constraints','source_references','requirement_id'])
                 self.assertEqual(len(app.dataframe[0].value),0)
                 self.assertLess(len(app.expander),10)
                 app.sidebar.radio[0].set_value('Evidence Matching').run()
