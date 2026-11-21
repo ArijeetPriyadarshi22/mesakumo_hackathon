@@ -311,5 +311,36 @@ class ProposalPageTests(unittest.TestCase):
         self.assertEqual(len(table), 3)
 
 
+class RequestyTaskTests(unittest.TestCase):
+    """The real model class must keep complete_task and the system/max_tokens plumbing (merge guard)."""
+
+    def model(self):
+        from types import SimpleNamespace
+        from mesakumo.models import RequestyModel
+        model = RequestyModel('https://router.eu.requesty.ai/v1', 'fixture-model', 'fixture-key')
+        self.sent = []
+        reply = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='{}'))],
+                                model_dump_json=lambda: '{}')
+        model.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+            create=lambda **kwargs: self.sent.append(kwargs) or reply)))
+        return model
+
+    def test_complete_task_sends_its_own_system_message_and_schema(self):
+        self.model().complete_task('Prompt', system=DRAFTING_SYSTEM, schema=SCHEMA, schema_name='proposal_section',
+                                   max_tokens=3000)
+        sent = self.sent[0]
+        self.assertEqual(sent['messages'][0], {'role': 'system', 'content': DRAFTING_SYSTEM})
+        self.assertEqual((sent['max_tokens'], sent['response_format']['json_schema']['name']), (3000, 'proposal_section'))
+
+    def test_other_calls_keep_their_default_system_messages(self):
+        model = self.model()
+        model.complete('Prompt')
+        model.complete_evidence('Prompt')
+        self.assertIn('Extract tender requirements only.', self.sent[0]['messages'][0]['content'])
+        self.assertEqual(self.sent[0]['max_tokens'], 8000)
+        self.assertIn('Assess tender evidence only.', self.sent[1]['messages'][0]['content'])
+        self.assertEqual(self.sent[1]['max_tokens'], 1800)
+
+
 if __name__ == '__main__':
     unittest.main()
