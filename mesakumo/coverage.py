@@ -1,5 +1,5 @@
 """Exhaustive source scheduling with independently checked verbatim citations."""
-import fcntl
+from .filelock import lock_nonblocking
 from dataclasses import asdict
 from .agent import ExtractionRuns, sources, snapshot, encoded, parse_action, merge_candidates, possible_conflicts
 from .models import DisabledModel, ModelUnavailable
@@ -75,7 +75,7 @@ class CoverageRuns(ExtractionRuns):
         key = snapshot(project, rows)
         with (self.store.path.parent / (project.id + '.agent.lock')).open('a') as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_nonblocking(lock)
             except BlockingIOError:
                 raise ValueError('Extraction is already running for this tender. Wait for it to finish.')
             prior = self.get(project, rows)

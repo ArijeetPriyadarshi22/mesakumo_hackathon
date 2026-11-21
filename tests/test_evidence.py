@@ -63,7 +63,10 @@ class EvidenceTests(unittest.TestCase):
             (root / 'notes.bin').write_bytes(b'unsupported')
             (root / 'broken.pptx').write_bytes(b'corrupt')
             (root / 'unselected.txt').write_text('Never ingested')
-            (root / 'linked.txt').symlink_to(root / 'unselected.txt')
+            try:
+                (root / 'linked.txt').symlink_to(root / 'unselected.txt')
+            except OSError:  # Windows needs admin rights or Developer Mode for symlinks.
+                self.skipTest('Creating symbolic links is not permitted on this machine.')
             readings = read_evidence(root, inventory, selected)
             self.assertEqual([r.status for r in readings], ['Read', 'Missing', 'Unsupported', 'Unreadable', 'Unreadable'])
             self.assertEqual([r.source.relative_path for r in readings], selected)

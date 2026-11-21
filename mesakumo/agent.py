@@ -2,7 +2,7 @@
 import hashlib
 import json
 import re
-import fcntl
+from .filelock import lock_nonblocking
 from datetime import datetime, timezone
 import logging
 from typing import TypedDict
@@ -229,7 +229,7 @@ class ExtractionRuns:
         key = snapshot(project, rows)
         lockpath = self.store.path.parent / (project.id + '.agent.lock')
         with lockpath.open('a') as lock:
-            try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try: lock_nonblocking(lock)
             except BlockingIOError: return self.get(project, rows)
             prior = self.get(project, rows)
             if prior and prior['status']=='running':

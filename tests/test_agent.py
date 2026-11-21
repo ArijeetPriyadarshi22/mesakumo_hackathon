@@ -137,11 +137,11 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result['status'],'failed')
 
     def test_lock_and_interrupted_retry(self):
-        import fcntl
+        from mesakumo.filelock import lock_nonblocking
         lockpath=self.store.path.parent/(self.project.id+'.agent.lock')
         model=Scripted(self.sequence())
         with lockpath.open('a') as lock:
-            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            lock_nonblocking(lock)
             self.assertIsNone(self.runs.ensure(self.project,self.rows,model))
             self.assertEqual(model.calls,0)
         from mesakumo.agent import snapshot

@@ -1,6 +1,7 @@
 """Transactional local snapshots with optimistic concurrency protection."""
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from .domain import Project
 
@@ -14,8 +15,16 @@ class ProjectStore:
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, revision INTEGER, payload TEXT)')
 
+    @contextmanager
     def connect(self):
-        return sqlite3.connect(self.path)
+        # sqlite3's own context manager commits or rolls back but never closes. Open
+        # connections keep the file locked on Windows, so close explicitly afterwards.
+        db = sqlite3.connect(self.path)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def list_projects(self):
         with self.connect() as db:
