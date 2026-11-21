@@ -1,8 +1,8 @@
-# Mesakumo technical handoff
+# TenderWorkbench technical handoff
 
 ## Purpose
 
-Mesakumo is a local Streamlit workspace for German public tenders. It takes a
+TenderWorkbench is a local Streamlit workspace for German public tenders. It takes a
 tender from source documents through a reviewed checklist, historical evidence
 matching, editable proposal sections, and PowerPoint export. Source references
 and unresolved items travel with the work so a developer or reviewer can trace

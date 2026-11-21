@@ -13,7 +13,7 @@ from mesakumo.tender_overview import TenderOverviews
 from mesakumo.ui.overview import overview_view
 from mesakumo.ui.evidence import evidence_view, proposal_handoff
 
-st.set_page_config(page_title='Mesakumo', layout='wide')
+st.set_page_config(page_title='TenderWorkbench', layout='wide')
 def begin_extraction():
     st.session_state.extraction_busy = True
     st.session_state.page = 'Tender Requirements'
