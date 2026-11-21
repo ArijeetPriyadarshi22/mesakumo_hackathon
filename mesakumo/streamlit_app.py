@@ -46,7 +46,16 @@ if not data.resolve().is_relative_to(ROOT):
     st.error('MESAKUMO_DATA_DIR must remain inside the repository.')
     st.stop()
 store = ProjectStore(data / 'workspace.sqlite3')
-project, rows = open_selection(store, pack, phase)
+# Parsed documents are shared by all sessions (and survive restarts), so only the first
+# visit to a tender pack reads its files; show progress while that happens.
+base_data = Path(os.environ.get('MESAKUMO_DATA_DIR', 'data'))
+parse_cache = (base_data if base_data.is_absolute() else ROOT / base_data) / 'parse_cache'
+reading = st.empty()
+def show_reading(done, total, name):
+    if done < total:
+        reading.progress(done / total, text=f'Reading tender documents for {pack.name}: {done + 1} of {total} — {name}')
+project, rows = open_selection(store, pack, phase, cache_dir=parse_cache, on_progress=show_reading)
+reading.empty()
 st.subheader(project.name)
 st.caption('Results are isolated by tender and phase. ' +
     ('Workspace persistence enabled.' if os.environ.get('MESAKUMO_KEEP_SESSION') == 'yes' else 'A new browser session starts fresh.'))
