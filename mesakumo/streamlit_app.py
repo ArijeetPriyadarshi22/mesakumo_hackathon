@@ -20,7 +20,9 @@ def begin_extraction():
 
 busy = st.session_state.get('extraction_busy', False)
 pages = ['Tender Requirements', 'Evidence Matching', 'Proposal Draft', 'Final Review & Export']
-page = st.sidebar.radio('Page', pages, index=0, key='page', disabled=busy)
+initial_page = os.environ.get('MESAKUMO_INITIAL_PAGE')
+page_index = pages.index(initial_page) if initial_page in pages else 0
+page = st.sidebar.radio('Page', pages, index=page_index, key='page', disabled=busy)
 st.title(page)
 directory = participant_directory()
 with st.sidebar.expander('Local configuration'):
@@ -29,7 +31,11 @@ choices = packs(directory)
 if not choices:
     st.error('No top-level Ausschreibung folders found. Set MESAKUMO_PARTICIPANT_DIR and restart.')
     st.stop()
-pack_name = st.sidebar.selectbox('Tender pack', [p.name for p in choices], disabled=busy, key='selected_tender')
+tender_names = [p.name for p in choices]
+initial_tender = os.environ.get('MESAKUMO_INITIAL_TENDER')
+tender_index = tender_names.index(initial_tender) if initial_tender in tender_names else 0
+pack_name = st.sidebar.selectbox('Tender pack', tender_names, index=tender_index, disabled=busy,
+                                 key='selected_tender')
 pack = next(p for p in choices if p.name == pack_name)
 phase = st.sidebar.selectbox('Phase', ['participation', 'offer'], disabled=busy) if pack.name == 'Ausschreibung 3' else 'single'
 actions = st.sidebar.columns(2)

@@ -172,17 +172,21 @@ def render_review(service, draft, directory, inventory, scope, fresh):
                            mime='text/csv; charset=utf-8')
         st.button('Continue to Proposal Draft', on_click=lambda: st.session_state.update(page='Proposal Draft'))
     else:
-        if issue:
-            st.caption(f'Approval is blocked: {issue}')
-        elif not fresh:
-            st.caption('Approval is blocked because the selected evidence files changed or could not be verified.')
+        if not fresh:
+            st.caption('Run matching on the current evidence files before approval.')
+        elif issue:
+            st.caption('Approval will carry unresolved items into Proposal Draft.')
         with st.form(f"approve_evidence:{scope}:{draft['review_revision']}"):
             reviewer = st.text_input('Evidence reviewer')
             acknowledge = st.checkbox('I acknowledge open No match items')
-            approve = st.form_submit_button('Approve and Save Evidence', disabled=bool(issue) or not fresh)
+            approve = st.form_submit_button('Approve and Save Evidence')
         if approve:
-            service.approve(draft['review_revision'], directory, inventory, reviewer, acknowledge)
-            st.rerun()
+            try:
+                service.approve(draft['review_revision'], directory, inventory, reviewer, acknowledge)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.rerun()
 
 
 def proposal_handoff(store, project, rows, directory):

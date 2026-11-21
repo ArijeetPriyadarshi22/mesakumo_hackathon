@@ -16,10 +16,11 @@ import json
 import re
 from datetime import datetime, timezone
 
-from .evidence_review import documents_current
+from .evidence_review import documents_current, evidence_file_issues, row_coverage_issue
 from .persistence import ConflictError
 
 FIT_GERMAN = {'Strong match': 'vollständig belegt', 'Partial match': 'teilweise belegt', 'No match': 'nicht belegt'}
+CITED_FITS = ('Strong match', 'Partial match')
 PROSE_KINDS = ('deliverable', 'eligibility/evidence')  # Categories that normally need proposal prose.
 MAX_PROMPT_BYTES = 120_000
 MAX_EXCERPT_CHARS = 6_000  # Per tender excerpt; evidence excerpts are sent in full.
@@ -85,6 +86,8 @@ def section_items(row, draft=None):
 
     add('gap', row.get('gap'))
     add('current_action', row.get('current_action'))
+    if coverage := row_coverage_issue(row):
+        add('search_coverage', row.get('error') or coverage)
     if row['fit'] in ('No match', 'Partial match') and not (row.get('gap') or '').strip():
         add('missing_evidence', NO_EVIDENCE_ITEM)
     for text in (*draft.get('draft_open_items', []), *open_items(draft.get('text'))):
@@ -209,11 +212,12 @@ def validate_draft(raw, row, aliases):
 
 def draft_row(row, corpus, model, feedback=None):
     """Draft one approved evidence row. Raises ValueError or ModelUnavailable; returns a draft dict."""
-    if row['fit'] == 'No match':
+    if row['fit'] not in CITED_FITS:
+        text = ('Für diese Anforderung liegt in den geprüften Unterlagen noch kein Nachweis vor.'
+                if row['fit'] == 'No match' else 'Die Nachweissuche für diese Anforderung ist noch offen.')
         return dict(title='Nachweis: ' + _clip(row['requirement']['text'], 120),
-                    text='Für diese Anforderung liegt in den geprüften Unterlagen noch kein Nachweis vor.\n'
-                         + '\n'.join(_marker(item) for item in section_items(row).values()),
-                    citation_ids=[], origin='No match — fixed text, no model call')
+                    text=text + '\n' + '\n'.join(_marker(item) for item in section_items(row).values()),
+                    citation_ids=[], origin='Fixed text · no model call')
     prompt, aliases = build_prompt(row, corpus, feedback)
     raw = model.complete_task(prompt, system=DRAFTING_SYSTEM, schema=SCHEMA, schema_name='proposal_section',
                               max_tokens=3000)
@@ -268,7 +272,7 @@ class ProposalDrafts:
         if draft.get('review_rules') != REVIEW_RULES:
             if draft['status'] == 'Approved':
                 draft = {**_without_decision(draft), 'status': 'Edited'}
-            draft['citations_need_review'] = draft['fit'] != 'No match'
+            draft['citations_need_review'] = draft['fit'] in CITED_FITS
             draft['review_rules'] = REVIEW_RULES
         return draft
 
@@ -321,11 +325,31 @@ class ProposalDrafts:
             if existing and existing['status'] == 'Declined':
                 declines.append({'comment': existing['decline_comment'], 'by': existing['declined_by'],
                                  'at': existing['updated_at'], 'text': existing['text']})
-            return {**draft, 'fit': row['fit'], 'status': 'Draft', 'declines': declines,
-                    'redraft_of_decline': bool(feedback), 'review_rules': REVIEW_RULES,
-                    'citations_need_review': False, 'draft_open_items': _draft_markers(existing, draft['text']),
-                    'open_item_resolutions': {}}
+            return self._draft_payload(row, draft, existing, declines, bool(feedback))
         return self._write(requirement_id, version, update)
+
+    @staticmethod
+    def _draft_payload(row, draft, previous, declines, redraft):
+        return {**draft, 'fit': row['fit'], 'status': 'Draft', 'declines': declines,
+                'redraft_of_decline': redraft, 'review_rules': REVIEW_RULES, 'citations_need_review': False,
+                'draft_open_items': _draft_markers(previous, draft['text']), 'open_item_resolutions': {}}
+
+    def generate_placeholders(self, requirement_ids):
+        """Write missing fixed sections together so a batch checks its inputs once."""
+        updated_at = datetime.now(timezone.utc).isoformat()
+        payloads = []
+        for rid in requirement_ids:
+            row = self.rows[rid]
+            if row['fit'] in CITED_FITS:
+                raise ValueError('This requirement needs a model draft or a manual section.')
+            draft = draft_row(row, self.corpus, None)
+            payload = self._draft_payload(row, draft, None, [], False)
+            payloads.append((*self.key, rid, 1, json.dumps({**payload, 'updated_at': updated_at}, ensure_ascii=False)))
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._check_current(db)
+            db.executemany('''INSERT INTO proposal_drafts VALUES (?,?,?,?,?,?)
+                ON CONFLICT(project_id, checklist_revision, evidence_revision, requirement_id) DO NOTHING''', payloads)
 
     def edit(self, requirement_id, title, text, expected_version):
         if not title.strip() or not text.strip():
@@ -334,12 +358,16 @@ class ProposalDrafts:
             raise ValueError('Close every [OFFEN: ...] marker, or remove it once the point is resolved.')
         def update(current):
             if current is None:
-                raise ValueError('Draft this section before editing it.')
+                return {'title': title.strip(), 'text': text.strip(), 'status': 'Edited',
+                        'fit': self.rows[requirement_id]['fit'], 'citation_ids': [], 'origin': 'Manual draft',
+                        'citations_need_review': self.rows[requirement_id]['fit'] in CITED_FITS,
+                        'draft_open_items': open_items(text), 'open_item_resolutions': {},
+                        'declines': [], 'review_rules': REVIEW_RULES}
             if (title.strip(), text.strip()) == (current['title'], current['text']):
                 return current
             # Any change cancels an earlier approval or decline: the new text needs a new decision.
             return {**_without_decision(current), 'title': title.strip(), 'text': text.strip(), 'status': 'Edited',
-                    'citations_need_review': current['fit'] != 'No match',
+                    'citations_need_review': current['fit'] in CITED_FITS,
                     'draft_open_items': _draft_markers(current, text), 'open_item_resolutions': {}}
         return self._write(requirement_id, expected_version, update)
 
@@ -370,8 +398,8 @@ class ProposalDrafts:
             confirmed = current['citation_ids'] if citation_ids is None else list(dict.fromkeys(citation_ids))
             if any(pid not in row['citation_ids'] or pid not in self.corpus for pid in confirmed):
                 raise ValueError('Only citations approved for this requirement can be confirmed.')
-            if bool(confirmed) != (row['fit'] != 'No match'):
-                raise ValueError('A cited draft requires approved evidence. No match must have no citations.')
+            if bool(confirmed) != (row['fit'] in CITED_FITS):
+                raise ValueError('Strong and Partial drafts require approved citations. Other drafts must have none.')
             items = list(pending_items(row, current).values())
             if items and not accept_open_items:
                 raise ValueError(f'{len(items)} open item(s) remain. Record their resolution, or confirm that '
@@ -411,27 +439,43 @@ class ProposalDrafts:
         if excluded and not acknowledge_excluded:
             raise ValueError(f'{len(excluded)} requirement(s) have no approved section and will be left out of the '
                              'PPTX. Confirm this, or approve them first.')
+        return self._save_package(drafts, approved, excluded, reviewer.strip(), project_name)
+
+    def save_package(self, expected_fingerprint, project_name=''):
+        """Save the current draft text for export, including its open items."""
+        drafts = self.all()
+        if self._fingerprint(drafts) != expected_fingerprint:
+            raise ConflictError('Sections changed. Reload Proposal Draft and try again.')
+        included = [rid for rid in self.rows if rid in drafts and drafts[rid]['status'] != 'Declined']
+        if not included:
+            raise ValueError('Save at least one section before opening export.')
+        excluded = [rid for rid in self.rows if rid not in included]
+        return self._save_package(drafts, included, excluded, '', project_name)
+
+    def _save_package(self, drafts, included, excluded, reviewer, project_name):
         def section(rid):
             row, draft = self.rows[rid], drafts[rid]
+            citation_ids = [] if draft.get('citations_need_review') else draft.get('citation_ids', [])
             return dict(requirement_id=rid, requirement=row['requirement']['text'],
                         category=row['requirement'].get('kind', ''), fit=row['fit'], title=draft['title'],
                         text=section_export_text(row, draft), open_items=list(pending_items(row, draft).values()),
                         open_item_resolutions=draft.get('open_item_resolutions', {}),
                         citations=[{k: self.corpus[pid].get(k, '') for k in
                                     ('passage_id', 'document_id', 'filename', 'location', 'excerpt', 'document_version')}
-                                   for pid in draft.get('citation_ids', [])],
+                                   for pid in citation_ids],
                         tender_sources=[{k: s.get(k, '') for k in
                                          ('passage_id', 'document_id', 'filename', 'location',
                                           'original_excerpt', 'document_version')}
                                         for s in row.get('tender_sources', [])],
                         evidence_gap=row.get('gap', ''), current_action=row.get('current_action', ''),
-                        approved_by=draft['approved_by'],
-                        approved_at=draft['approved_at'])
+                        approved_by=draft.get('approved_by', ''),
+                        approved_at=draft.get('approved_at', ''))
         package = dict(project_id=self.key[0], project_name=project_name, checklist_revision=self.key[1],
                        evidence_revision=self.key[2], reviewer=reviewer.strip(),
                        review_rules=REVIEW_RULES, approved_at=datetime.now(timezone.utc).isoformat(),
                        fingerprint=self._fingerprint(drafts),
-                       sections=[section(rid) for rid in approved],
+                       evidence_file_issues=evidence_file_issues(self.review),
+                       sections=[section(rid) for rid in included],
                        excluded=[dict(requirement_id=rid, requirement=self.rows[rid]['requirement']['text'],
                                       status=drafts.get(rid, {}).get('status', 'Not drafted'),
                                       open_items=list(pending_items(self.rows[rid], drafts.get(rid)).values()))
@@ -440,7 +484,7 @@ class ProposalDrafts:
             db.execute('BEGIN IMMEDIATE')
             self._check_current(db)
             if self._fingerprint(self._all(db)) != package['fingerprint']:
-                raise ConflictError('Sections changed while approving. Review the latest state and try again.')
+                raise ConflictError('Sections changed while saving. Reload Proposal Draft and try again.')
             latest = db.execute('''SELECT MAX(revision) FROM proposal_packages WHERE project_id=? AND
                 checklist_revision=? AND evidence_revision=?''', self.key).fetchone()[0] or 0
             package['revision'] = latest + 1
@@ -478,13 +522,13 @@ def _without_decision(draft):
             ('approved_by', 'approved_at', 'approved_open_items', 'declined_by', 'decline_comment')}
 
 
-QUALITY = {'Strong match': 'sufficient', 'Partial match': 'partial', 'No match': 'none'}
+QUALITY = {'Strong match': 'sufficient', 'Partial match': 'partial', 'No match': 'none', '': 'none'}
 HANDOFF_COLUMNS = ['Requirement ID', 'Requirement', 'Category', 'Evidence fit', 'Section title', 'Section text',
                    'Open items', 'Evidence gap', 'Citations', 'Tender sources', 'Approved by']
 
 
 def handoff_csv(package):
-    """The approved sections as CSV for the model that compiles the PPTX (UTF-8 with BOM)."""
+    """Download the saved proposal sections as UTF-8 CSV with a BOM."""
     stream = io.StringIO(newline='')
     writer = csv.writer(stream)
     writer.writerow(HANDOFF_COLUMNS)
@@ -497,7 +541,7 @@ def handoff_csv(package):
 
 
 def handoff_project(package, review):
-    """The approved package as a domain Project, as the PPTX exporter expects (approved sections only)."""
+    """Convert the saved proposal package to the domain Project format."""
     from dataclasses import fields
     from .domain import EvidenceMatch, Project, ProposalSection, Requirement, SourcePassage
     known = {f.name for f in fields(Requirement)}
@@ -514,7 +558,7 @@ def handoff_project(package, review):
                                 [c['passage_id'] for c in s['citations']], QUALITY[s['fit']], s['evidence_gap'],
                                 decision='Approved') for s in package['sections']],
         sections=[ProposalSection('S-' + s['requirement_id'], s['title'], s['text'], [s['requirement_id']],
-                                  [c['passage_id'] for c in s['citations']], reviewed=True)
+                                  [c['passage_id'] for c in s['citations']], reviewed=bool(s['approved_by']))
                   for s in package['sections']])
 
 
@@ -541,7 +585,7 @@ def review_summary(review, drafts, project_name=''):
             if check_wording(draft['text']):
                 reasons.append('check wording: ' + ', '.join(check_wording(draft['text'])))
             if row['fit'] != 'Strong match':
-                reasons.append(f"evidence: {row['fit']}")
+                reasons.append(f"evidence: {row['fit'] or 'Assessment open'}")
         items = pending_items(row, draft)
         if items:
             reasons.append('open: ' + ' / '.join(items.values()))
@@ -560,7 +604,7 @@ def review_summary(review, drafts, project_name=''):
         rid, draft = row['requirement']['id'], drafts.get(row['requirement']['id'])
         lines += [f"### {n}. {draft['title'] if draft else _clip(row['requirement']['text'], 110)}", '',
                   f"*Requirement:* {row['requirement']['text']}  ",
-                  f"*Evidence:* {row['fit']} · *Status:* {status(rid)}"
+                  f"*Evidence:* {row['fit'] or 'Assessment open'} · *Status:* {status(rid)}"
                   + (f" by {draft['approved_by']}" if draft and draft['status'] == 'Approved' else ''), '']
         if draft:
             cited = [review['corpus'][pid] for pid in draft.get('citation_ids', [])]

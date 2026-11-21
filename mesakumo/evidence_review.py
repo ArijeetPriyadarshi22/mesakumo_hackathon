@@ -83,12 +83,12 @@ def documents_current(draft, directory, inventory):
 
 def row_coverage_issue(row):
     scope = row.get('search_scope')
-    if row['status'] not in ('Judged', 'Reviewed') or scope == 'incomplete':
-        return 'Resolve incomplete evidence searches before approval.'
+    if not row['fit'] or row['status'] not in ('Judged', 'Reviewed') or scope == 'incomplete':
+        return 'Complete the incomplete evidence search.'
     if scope == 'current_action' and row['fit'] != 'No match':
         return 'A current signature remains a current action.'
     if row['fit'] in GRADES[1:] and scope not in ('full_readable_scan', 'current_action'):
-        return 'Confirm the readable evidence before approving Partial match or No match.'
+        return 'Confirm the readable evidence for this assessment.'
     return ''
 
 
@@ -96,6 +96,10 @@ def coverage_issue(draft):
     if any(doc['status'] != 'Read' for doc in draft['documents']):
         return 'Resolve unreadable selected evidence or change the selection and rerun matching.'
     return next((issue for row in draft['rows'] if (issue := row_coverage_issue(row))), '')
+
+
+def evidence_file_issues(draft):
+    return [f"{doc['filename']} · {doc['status']}" for doc in draft['documents'] if doc['status'] != 'Read']
 
 
 class EvidenceReview:
@@ -180,19 +184,19 @@ class EvidenceReview:
         return self._change(revision, replace)
 
     @staticmethod
-    def _validate_row(row, corpus):
+    def _validate_row(row, corpus, *, allow_open=False):
         fit, ids = row['fit'], row['citation_ids']
-        if fit not in GRADES:
+        if fit not in GRADES and not (allow_open and fit == ''):
             raise ValueError('Resolve every incomplete requirement before approving evidence.')
         if any(pid not in corpus for pid in ids):
             raise ValueError('Only citations from the selected corpus are allowed.')
         if fit in GRADES[:2] and not ids:
             raise ValueError('Strong and Partial match require an evidence citation.')
-        if fit == 'No match' and not corpus:
+        if fit == 'No match' and not corpus and not allow_open:
             raise ValueError('No match requires review of readable selected evidence.')
         if fit == 'No match' and ids:
             raise ValueError('Remove evidence citations from a No match row.')
-        if fit in GRADES[1:] and not row['gap'].strip():
+        if fit in GRADES[1:] and not row['gap'].strip() and not allow_open:
             raise ValueError('Partial and No match require a Gap / next action note.')
 
     def edit(self, revision, requirement_id, fit, notes, gap, citation_ids):
@@ -224,7 +228,7 @@ class EvidenceReview:
                 WHERE project_id=? AND checklist_revision=? AND revision=?''',
                 (*self.key, draft['review_revision'])).fetchone()
         if (not row or not self._covers_proposal_requirements(draft)
-                or coverage_issue(draft) or not documents_current(draft, directory, inventory)):
+                or not documents_current(draft, directory, inventory)):
             return None
         snapshot = json.loads(row[0])
         if snapshot['review'] != draft or _checksum(bytes(row[1])) != row[2]:
@@ -244,13 +248,8 @@ class EvidenceReview:
                 if (not draft.get('rows') or not self._covers_proposal_requirements(draft)
                         or not documents_current(draft, directory, inventory)):
                     raise ValueError('Evidence inputs are missing or changed. Run matching on the current selection.')
-                issue = coverage_issue(draft)
-                if issue:
-                    raise ValueError(issue)
                 for row in draft['rows']:
-                    self._validate_row(row, draft['corpus'])
-                if any(row['fit'] == 'No match' for row in draft['rows']) and not acknowledge:
-                    raise ValueError('Acknowledge open No match rows.')
+                    self._validate_row(row, draft['corpus'], allow_open=True)
                 if db.execute('''SELECT 1 FROM evidence_approvals
                         WHERE project_id=? AND checklist_revision=? AND revision=?''',
                         (*self.key, revision)).fetchone():

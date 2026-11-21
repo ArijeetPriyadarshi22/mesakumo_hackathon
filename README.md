@@ -1,36 +1,36 @@
-## Page 4 — Final Review & Export
+## Reopen Tender 2 for local testing
 
-Approve the proposal package on **Proposal Draft**, then choose **Continue to
-Final Review & Export**. Page 4 shows the package revision, approved sections,
-citations, excluded requirements and open items. Its CSV and JSON are still
-available. Use **Back to Proposal Draft** to make corrections.
+Run `.venv/bin/python -m mesakumo.resume_tender2` and open
+`http://127.0.0.1:8505`. The regular Streamlit app opens Tender 2 with its
+saved checklist and evidence review. Choose **Evidence Matching** to see
+the saved Page 2 rows. The first run creates an independent workspace in
+`data/recovered-tender-2`. Later runs reopen that copy and retain your edits.
 
-**Generate draft preview** renders the saved proposal locally using
-`Angebotstemplate.pptx` from the participant folder. The preview download is
-labeled as draft and retains open-item markers. The renderer uses the
-template's branded cover and title-and-content layouts, keeps complete
-approved text across continuation slides and records section IDs and citations
-in speaker notes. It leaves example content and unused slides out of the
-output. The template is read from a copy in memory. No model is called.
+The launcher uses saved data and disables model calls by default. Add
+`--enable-model` if you want to run matching manually with the usual model
+configuration. Saved incomplete evidence still needs review and approval
+before it can reach Proposal Draft. Use `--source path/to/workspace.sqlite3
+--workspace data/another-test-copy` to load a different saved session into a
+new copy.
 
-After reviewing the preview, enter a reviewer name and select **Approve
-rendered PPTX**. Unresolved items in included sections and excluded mandatory
-or unclassified proposal requirements block final approval. SQLite stores the
-exact rendered bytes and their checksum. The approved download returns those
-same bytes. A changed section, upstream approval, or template requires a new
-current preview and approval.
+---
 
-The challenge brief mentions Word. This milestone produces PPTX from the
-supplied reference template. No official DOCX template was selected.
-The local `vika-changes` exporter was inspected. Its export path uses an LLM
-and a different slide schema, so Page 4 uses a deterministic exporter.
+## Pages 3 and 4 — Proposal Draft and PowerPoint export
 
-Verification used a synthetic approved proposal and the actual supplied
-template. The automated checks covered the Page 3 to Page 4 flow, preview
-and approved download equality, reopen, stale inputs, missing or invalid
-templates, and sample-content cleanup. All seven slides in a separate
-synthetic QA deck were visually checked in macOS Quick Look. PowerPoint
-itself was not used for validation.
+On **Proposal Draft**, generate missing sections or write and save a section
+directly. **Continue to Final Review & Export** saves the current sections as a
+versioned package. Open items and omitted requirements stay visible without
+requiring separate confirmations. Sections previously declined stay out until
+edited or regenerated.
+
+Select **Generate PowerPoint**, then **Download PowerPoint**. The renderer
+uses the participant folder's `Angebotstemplate.pptx` and calls no model.
+The deck retains open-item markers, complete text across continuation slides,
+and available source references in speaker notes. CSV and JSON remain
+available under **Other downloads**. SQLite saves the rendered bytes so the
+same version can be downloaded after reopening. Edit a section on Page 3 and
+continue again to export the updated content. The original template is
+preserved.
 
 ---
 

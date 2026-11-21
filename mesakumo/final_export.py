@@ -32,7 +32,7 @@ def read_template(directory):
 
 def final_blockers(package, proposal_rows):
     """Treat unresolved included items and omitted required or unclassified rows as blocking."""
-    blockers = []
+    blockers = [f"Evidence file · {item}" for item in package.get('evidence_file_issues', [])]
     for section in package['sections']:
         pending = dict.fromkeys([*section['open_items'], *open_items(section['text'])])
         blockers.extend(f"{section['requirement_id']} · {item}" for item in pending)

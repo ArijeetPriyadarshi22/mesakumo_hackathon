@@ -229,7 +229,7 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(all(not row.fit for row in run.rows))
         self.assertEqual(len(model.prompts), 2)
 
-    def test_approval_requires_confirmed_coverage_even_after_manual_review(self):
+    def test_coverage_warning_remains_after_manual_review(self):
         row = {'status': 'Reviewed', 'fit': 'No match'}
         draft = {'documents': [{'status': 'Read'}], 'rows': [row]}
         self.assertIn('Confirm', coverage_issue(draft))

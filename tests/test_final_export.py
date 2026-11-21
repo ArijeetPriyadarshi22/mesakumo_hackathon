@@ -74,22 +74,14 @@ class FinalExportTests(unittest.TestCase):
                 MemoryMediaFileStorage, 'load_and_get_id', autospec=True, side_effect=original) as media:
             app = AppTest.from_function(page_script, args=(str(self.store.path), str(self.root),
                                                            json.dumps(self.review))).run()
-            widget(app.text_input, 'Your name').set_value('Reviewer').run()
-            widget(app.button, '✅ Approve this section').click().run()
-            widget(app.checkbox, 'Leave out').check()
-            widget(app.button, 'Approve draft for PPTX').click().run()
             widget(app.button, 'Continue to Final Review').click().run()
             self.assertFalse(app.exception)
-            self.assertTrue(any('proposal package 1' in item.value for item in app.success))
-
-            widget(app.button, 'Generate draft preview').click().run()
-            preview = downloaded(app, media, 'Download draft preview')
-            widget(app.button, 'Approve rendered PPTX').click().run()
-            self.assertTrue(any('final reviewer name' in item.value for item in app.error))
-            widget(app.text_input, 'Final reviewer').set_value('Final reviewer')
-            widget(app.button, 'Approve rendered PPTX').click().run()
+            self.assertTrue(any('Proposal version 1' in item.value for item in app.caption))
+            self.assertFalse(app.text_input)
+            self.assertFalse(app.checkbox)
+            widget(app.button, 'Generate PowerPoint').click().run()
+            preview = downloaded(app, media, 'Download PowerPoint')
             self.assertFalse(app.exception)
-            self.assertEqual(downloaded(app, media, 'Download approved PPTX'), preview)
             self.assertEqual(self.template_path.read_bytes(), self.template_bytes)
             with ZipFile(io.BytesIO(preview)) as deck:
                 self.assertIsNone(deck.testzip())
@@ -127,7 +119,7 @@ class FinalExportTests(unittest.TestCase):
             reopened = AppTest.from_function(page_script, args=(str(self.store.path), str(self.root),
                                                                 json.dumps(self.review))).run()
             reopened.sidebar.radio[0].set_value('Final Review & Export').run()
-            self.assertEqual(downloaded(reopened, media, 'Download approved PPTX'), preview)
+            self.assertEqual(downloaded(reopened, media, 'Download PowerPoint'), preview)
 
     def test_stale_template_package_and_checksum(self):
         package = self._package()

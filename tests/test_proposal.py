@@ -33,12 +33,12 @@ CORPUS = {
 ROWS = [
     dict(requirement=requirement('R1', 'Qualifikationen und akademische Hintergründe nachweisen'), tender_sources=TENDER,
          citation_ids=['P10', 'P11'], fit='Partial match', gap='Akademischer Hintergrund fehlt.', notes='Engl passt fachlich.',
-         current_action='Verfügbarkeit bestätigen.', status='Reviewed', error='', trace=[]),
+         current_action='Verfügbarkeit bestätigen.', status='Reviewed', error='', trace=[], search_scope='full_readable_scan'),
     dict(requirement=requirement('R2', 'Projektleitung benennen', 'deliverable'), tender_sources=TENDER,
          citation_ids=['P10'], fit='Strong match', gap='', notes='', current_action='', status='Judged', error='', trace=[]),
     dict(requirement=requirement('R3', 'ISO-9001-Zertifikat vorlegen'), tender_sources=TENDER,
          citation_ids=[], fit='No match', gap='Kein Zertifikat in den Unterlagen.', notes='', current_action='',
-         status='Reviewed', error='', trace=[]),
+         status='Reviewed', error='', trace=[], search_scope='full_readable_scan'),
 ]
 REVIEW = dict(project_id='p1', checklist_revision=3, review_revision=7, rows=ROWS, corpus=CORPUS,
               phase='single', selected=[], directory='', documents=[])
@@ -345,57 +345,37 @@ class ProposalPageTests(unittest.TestCase):
         ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
         app = self.app().run()
         self.assertFalse(app.exception)
-        self.assertIn('drafting is unavailable', app.info[0].value)
-        self.assertEqual([m.value for m in app.metric], ['3', '1', '0', '0', '2'])
-        self.assertTrue(any(w.value.startswith('Open items') for w in app.warning))
+        self.assertEqual(app.dataframe[0].value['Section'].tolist(), ['Draft', 'Empty', 'Empty'])
+        self.assertTrue(any(e.label.startswith('Open items') for e in app.expander))
         self.widget(app.text_area, 'Section text').set_value(
             'Manuela Engl, MBA (laut Dozentenblatt). [OFFEN: Verfügbarkeit bestätigen]')
-        self.widget(app.button, 'Save edits').click().run()
+        self.widget(app.button, 'Save section').click().run()
         self.assertFalse(app.exception)
         saved = ProposalDrafts(self.store, REVIEW).all()['R1']
         self.assertEqual((saved['status'], open_items(saved['text'])), ('Edited', ['Verfügbarkeit bestätigen']))
 
-    def test_page_approve_decline_and_package(self):
-        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
+    def test_page_exports_manual_and_generated_text_with_no_review_steps(self):
         app = self.app().run()
-        self.widget(app.button, '✅ Approve').click().run()
-        self.assertIn('Enter your name', app.error[0].value)  # No reviewer name yet.
-        self.widget(app.text_input, 'Your name').set_value('Luba').run()
-        self.widget(app.button, '✅ Approve').click().run()
-        self.assertIn('open item(s) remain', app.error[0].value)
-        self.widget(app.checkbox, 'Keep the 3 open item').check()
-        self.widget(app.button, '✅ Approve').click().run()
-        self.assertFalse(app.exception)
-        self.assertEqual(ProposalDrafts(self.store, REVIEW).all()['R1']['status'], 'Approved')
-
-        self.widget(app.checkbox, 'Leave out the 2 requirement').check()
-        self.widget(app.button, 'Approve draft for PPTX').click().run()
+        self.widget(app.text_area, 'Section text').set_value('Manueller Entwurf')
+        self.widget(app.button, 'Save section').click().run()
+        self.widget(app.button, 'Generate missing drafts').click().run()
+        self.assertFalse(app.checkbox)
+        self.widget(app.button, 'Continue to Final Review').click().run()
         self.assertFalse(app.exception)
         package, current = ProposalDrafts(self.store, REVIEW).latest_package()
         self.assertTrue(current)
-        self.assertEqual((package['reviewer'], len(package['sections'])), ('Luba', 1))
-        self.assertTrue(any('Draft approved for the PPTX' in s.value for s in app.success))
+        self.assertEqual(package['reviewer'], '')
+        self.assertEqual([section['requirement_id'] for section in package['sections']], ['R1', 'R3'])
+        self.assertIn('Manueller Entwurf', package['sections'][0]['text'])
+        self.assertIn('Verfügbarkeit bestätigen.', package['sections'][0]['open_items'])
+        self.assertEqual(package['sections'][0]['citations'], [])
+        self.assertEqual([row['requirement_id'] for row in package['excluded']], ['R2'])
 
-    def test_page_decline_needs_comment(self):
-        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
-        app = self.app().run()
-        self.widget(app.text_input, 'Your name').set_value('Luba').run()
-        self.widget(app.button, '❌ Decline').click().run()
-        self.assertIn('what should change', app.error[0].value)
-        self.widget(app.text_area, 'What should change').set_value('Kein Studium behaupten.')
-        self.widget(app.button, '❌ Decline').click().run()
-        self.assertFalse(app.exception)
-        saved = ProposalDrafts(self.store, REVIEW).all()['R1']
-        self.assertEqual((saved['status'], saved['decline_comment']), ('Declined', 'Kein Studium behaupten.'))
-        self.assertTrue(any('Declined by Luba' in e.value for e in app.error))
-
-    def test_stale_tab_cannot_approve_an_unseen_revision(self):
+    def test_stale_tab_cannot_export_an_unseen_revision(self):
         from streamlit.testing.v1 import AppTest
         ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), 0)
         tab_a = AppTest.from_function(current_revision_page, args=(str(self.path),)).run()
-        self.widget(tab_a.text_input, 'Your name').set_value('Tab A').run()
-        self.widget(tab_a.checkbox, 'Keep the 3 open item').check()
-        old_button = self.widget(tab_a.button, '✅ Approve')
+        old_button = self.widget(tab_a.button, 'Continue to Final Review')
 
         newer = {**REVIEW, 'review_revision': REVIEW['review_revision'] + 1}
         save_approval_fixture(self.store, newer)
@@ -406,10 +386,10 @@ class ProposalPageTests(unittest.TestCase):
 
         old_button.click().run()
         self.assertFalse(tab_a.exception)
-        self.assertEqual(new_service.all()['R1']['status'], 'Draft')
+        self.assertIsNone(new_service.latest_package()[0])
         self.assertEqual(self.widget(tab_a.text_input, 'Section title').value, 'Unseen draft')
 
-    def test_filters_default_to_prose_categories(self):
+    def test_filters_show_all_proposal_categories(self):
         app = self.app().run()
         table = app.dataframe[0].value
         self.assertEqual(sorted(table['Category'].unique()), ['deliverable', 'eligibility/evidence'])
