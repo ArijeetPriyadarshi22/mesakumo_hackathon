@@ -9,6 +9,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .agent import encoded, parse_action
+from .evidence_confirmation import confirm_evidence
 from .models import ModelUnavailable
 
 GRADES = ('Strong match', 'Partial match', 'No match')
@@ -83,6 +84,7 @@ class MatchRow:
     evidence: list[dict] = field(default_factory=list)
     trace: list[dict] = field(default_factory=list)
     error: str = ''
+    search_scope: str = ''
 
 
 @dataclass
@@ -112,7 +114,7 @@ Return exactly one JSON action with keys tool and args. Available actions:
 {"tool":"submit","args":{"fit":"Strong match|Partial match|No match","passage_ids":[],"gap":"short explanation"}}
 Strong match requires direct support for all material criteria that historical evidence can establish.
 Partial match requires useful support for some criteria. Explain what is missing.
-No match requires a completed lookup and no useful support in readable selected files. Use no citations.
+No match means no useful support among the passages you inspected. Use no citations.
 Cite only retrieved passage IDs. Check exact criteria, dates, people, role, qualifications and who
 actually delivered or owned a project. Distinguish company, person, partner and subcontractor.
 Historical proposals show what was offered. They do not establish delivery, ownership or current
@@ -175,15 +177,8 @@ def _matching_graph(index, model_call):
                 if bool(ids) == (fit == 'No match') or (fit != 'Strong match' and not gap.strip()):
                     raise ValueError('Matching grades require citations. Partial and No match require a gap, and No match has no citations.')
                 evidence = [index.citation(pid) for pid in ids]
-                if current and DIRECT_SIGNATURE.search(requirement['text']):
-                    fit, ids, evidence = 'No match', [], []
-                    gap = CURRENT_NOTE
-                if fit == 'Strong match' and evidence and all(e['role'] == 'Historical proposal' for e in evidence):
-                    fit = 'Partial match'
-                    gap = 'Only historical bid material was cited. Confirm actual delivery, ownership or other claims independently.'
-                if current and fit == 'Strong match':
-                    fit = 'Partial match'
-                    gap = current
+                fit, evidence, gap = _apply_evidence_rules(requirement, current, fit, evidence, gap)
+                ids = [item['passage_id'] for item in evidence]
                 trace.append({'tool':'submit','fit':fit,'citations':ids})
                 return dict(actions=actions, result=MatchRow(requirement, 'Judged', fit, gap.strip(), current, evidence, trace))
             if actions >= MAX_ACTIONS:
@@ -219,7 +214,36 @@ def _matching_graph(index, model_call):
     return graph.compile()
 
 
-def match_evidence(approved, phase, readings, model_factory, on_progress=None):
+def _apply_evidence_rules(requirement, current, fit, evidence, gap):
+    if current and DIRECT_SIGNATURE.search(requirement['text']):
+        return 'No match', [], CURRENT_NOTE
+    if fit == 'Strong match' and evidence and all(item['role'] == 'Historical proposal' for item in evidence):
+        return ('Partial match', evidence,
+                'Only historical bid material was cited. Confirm actual delivery, ownership or other claims independently.')
+    if current and fit == 'Strong match':
+        return 'Partial match', evidence, current
+    return fit, evidence, gap
+
+
+def _mark_incomplete(row, reason):
+    row.search_scope = 'incomplete'
+    row.status = 'Incomplete'
+    row.error = reason
+    if row.fit == 'No match':
+        row.fit = ''
+        row.gap = ''
+
+
+def _confirm_row(row, index, model_call):
+    fit, ids, gap = confirm_evidence(row.requirement, index, model_call)
+    evidence = [index.citation(pid) for pid in ids]
+    row.fit, row.evidence, row.gap = _apply_evidence_rules(
+        row.requirement, row.current_action, fit, evidence, gap)
+    row.search_scope = 'full_readable_scan'
+    row.trace.append({'tool': 'confirm_coverage', 'evaluated_passages': len(index.entries), 'fit': row.fit})
+
+
+def match_evidence(approved, phase, readings, model_factory, on_progress=None, *, confirm_all=False):
     """Run once per approved row and keep failed or unprocessed rows visible."""
     requirements = deepcopy(approved['rows'])
     rows = [MatchRow(requirement, current_action=current_action(requirement)) for requirement in requirements]
@@ -242,6 +266,7 @@ def match_evidence(approved, phase, readings, model_factory, on_progress=None):
             row.error = 'Could not initialize the configured model. Check access and retry.'
         return run
     graph = _matching_graph(index, model_call)
+    sources_incomplete = any(doc['status'] != 'Read' for doc in documents)
     for i, requirement in enumerate(requirements):
         if on_progress:
             on_progress(i, len(rows))
@@ -251,13 +276,30 @@ def match_evidence(approved, phase, readings, model_factory, on_progress=None):
             rows[i].status = 'Failed'
             rows[i].error = f'Evidence lookup failed ({type(exc).__name__}).'
             continue
-        rows[i] = state['result']
-        if state.get('halt'):
+        row = rows[i] = state['result']
+        provider_failed = state.get('halt')
+        if row.status == 'Judged':
+            if row.current_action and DIRECT_SIGNATURE.search(requirement['text']):
+                row.search_scope = 'current_action'
+            elif sources_incomplete:
+                _mark_incomplete(row, 'Some selected evidence could not be read. Findings are provisional.')
+            elif row.fit == 'Strong match' and not confirm_all:
+                row.search_scope = 'retrieval'
+            else:
+                try:
+                    _confirm_row(row, index, model_call)
+                except ModelUnavailable:
+                    _mark_incomplete(row, 'The provider failed during evidence confirmation. Retry matching.')
+                    provider_failed = True
+                except ValueError as error:
+                    _mark_incomplete(row, str(error))
+        if provider_failed:
             for remaining in rows[i+1:]:
                 remaining.error = 'Skipped after a provider failure. Retry to run the lookup.'
             break
     if on_progress:
         on_progress(sum(row.status != 'Unprocessed' for row in rows), len(rows))
-    run.status = ('Failed' if any(row.status != 'Judged' for row in rows) else
-                  'Coverage gaps' if any(doc['status'] != 'Read' for doc in documents) else 'Complete')
+    run.status = ('Failed' if any(row.status in ('Failed', 'Unprocessed') for row in rows) else
+                  'Coverage gaps' if sources_incomplete or any(row.status == 'Incomplete' for row in rows)
+                  else 'Complete')
     return run
