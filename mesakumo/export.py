@@ -30,7 +30,10 @@ from pptx.oxml.ns import qn
 from pptx.slide import Slide
 from pptx.util import Inches
 
-from domain import Project
+try:  # Package import (app, tests); plain import when run as a script from mesakumo/.
+    from .domain import Project
+except ImportError:
+    from domain import Project
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str], None]
@@ -164,11 +167,17 @@ class ClaudeProposalStructurer:
         api_key: str | None = None,
         base_url: str = "https://router.eu.requesty.ai/v1",
         on_progress: ProgressCallback | None = _default_progress,
+        reasoning_effort: str | None = "none",
+        max_tokens: int = 16000,
     ):
         self.model_id = model_id
         self.api_key = api_key or os.environ.get("REQUESTY_API_KEY", "")
         self.base_url = base_url
         self.on_progress = on_progress
+        # On large inputs Claude Sonnet otherwise spends the whole output budget on hidden
+        # thinking and returns almost no JSON (finish_reason "length"). Structuring needs none.
+        self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
 
     def _emit(self, message: str) -> None:
         if self.on_progress:
@@ -249,20 +258,24 @@ class ClaudeProposalStructurer:
         last_logged_len = 0
         last_seen_section = ""
 
+        options = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
         stream = client.chat.completions.create(
             model=self.model_id,
-            max_tokens=8192,
+            max_tokens=self.max_tokens,
             temperature=0.1,
             stream=True,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            **options,
         )
 
+        finish_reason = None
         for event in stream:
             if not event.choices:
                 continue
+            finish_reason = event.choices[0].finish_reason or finish_reason
             delta = event.choices[0].delta.content or ""
             if not delta:
                 continue
@@ -293,7 +306,15 @@ class ClaudeProposalStructurer:
                 last_logged_len = len(joined)
                 self._emit(f"Fortschritt: ~{len(joined)} Zeichen generiert...")
 
-        return "".join(chunks) or "{}"
+        # Never turn a cut-off or empty answer into an empty presentation.
+        if finish_reason == "length":
+            raise RuntimeError(
+                f"The structuring model hit its output limit ({self.max_tokens} tokens) before finishing the "
+                "slide data. No presentation was created. Raise max_tokens or reduce the approved sections."
+            )
+        if not chunks:
+            raise RuntimeError("The structuring model returned no slide data. No presentation was created.")
+        return "".join(chunks)
 
     @staticmethod
     def _serialize_project_for_llm(project: Project) -> str:

@@ -12,7 +12,7 @@ import streamlit as st
 
 from ..models import DisabledModel, ModelUnavailable, configure_team_one, configured_model
 from ..persistence import ConflictError
-from ..proposal import (PROSE_KINDS, ProposalDrafts, check_wording, handoff_csv, open_items,
+from ..proposal import (PROSE_KINDS, ProposalDrafts, check_wording, handoff_csv, handoff_project, open_items,
                         review_summary)
 
 FIT_SHORT = {'Strong match': 'Strong', 'Partial match': 'Partial', 'No match': 'No match'}
@@ -264,9 +264,70 @@ def final_review_view(store, review):
     st.download_button('Download approved package (JSON)', json.dumps(package, ensure_ascii=False, indent=1).encode(),
                        f"{package['project_id']}-approved-sections-p{package['revision']}.json",
                        mime='application/json')
-    st.info('PPTX generation and the second review of the generated PPTX belong here. The exporter on the '
-            'vika-changes branch can take this package via proposal.handoff_project(package, review).')
-    for section in package['sections']:
-        with st.expander(section['title']):
-            st.markdown(section['text'])
+    with st.expander(f"Approved sections ({len(package['sections'])})"):
+        for section in package['sections']:
+            st.markdown(f"**{section['title']}**\n\n{section['text']}")
             st.caption(' · '.join(c['filename'] + ' · ' + c['location'] for c in section['citations']))
+    st.divider()
+    _presentation_panel(store, review, package)
+
+
+def _presentation_panel(store, review, package):
+    """Generate the PPTX from the approved package, then the second human review of the deck."""
+    from .. import pptx_from_drafts as decks_module
+    from ..discovery import participant_directory
+    st.subheader('Presentation')
+    decks = decks_module.GeneratedDecks(store, package)
+    latest = decks.latest()
+    try:
+        template = decks_module.find_template(participant_directory())
+    except FileNotFoundError as error:
+        st.error(f'{error} Set MESAKUMO_PARTICIPANT_DIR to the folder with the corporate template.')
+        return
+    st.caption(f'A model ({decks_module.PPTX_MODEL}) structures the approved sections into slide data; missing '
+               f'facts become [OFFEN: …]. The data then fills {template.name}. Takes about a minute.')
+    if st.button('Generate PPTX' if not latest else 'Generate a new PPTX', type='primary' if not latest else 'secondary'):
+        with st.status('Generating the presentation…', expanded=True) as status:
+            try:
+                pptx, payload = decks_module.render_pptx(handoff_project(package, review), template, reviewed=True,
+                                                         on_progress=status.write)
+                decks.save(pptx, payload, decks_module.PPTX_MODEL)
+                status.update(label='Presentation ready', state='complete')
+            except Exception as error:  # Model, network, template or rendering failure: nothing is saved.
+                status.update(label='No presentation was created', state='error')
+                st.error(f'{type(error).__name__}: {error}')
+                return
+        st.rerun()
+    if not latest:
+        return
+
+    revision, meta, payload, pptx = latest
+    st.download_button(f'Download presentation (PPTX, version {revision})', pptx,
+                       f"{package['project_id']}-angebot-p{package['revision']}-v{revision}.pptx",
+                       mime='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    st.download_button('Download slide data (JSON)', json.dumps(payload, ensure_ascii=False, indent=1).encode(),
+                       f"{package['project_id']}-slides-p{package['revision']}-v{revision}.json",
+                       mime='application/json')
+    st.caption(f"Generated {meta['created_at'][:16].replace('T', ' ')} UTC with {meta['model']}")
+    if meta['open_markers']:
+        with st.expander(f"{len(meta['open_markers'])} open point(s) in the presentation"):
+            st.markdown('\n'.join(f'- {marker}' for marker in meta['open_markers']))
+
+    st.markdown('**Second review: the presentation**')
+    if meta['status'] == 'Approved':
+        st.success(f"Presentation approved by {meta['reviewer']}.")
+        return
+    if meta['status'] == 'Declined':
+        st.error(f"Declined by {meta['reviewer']}: {meta['comment']}\n\nChange the sections on Proposal Draft "
+                 '(then approve the draft for the PPTX again), or generate a new PPTX.')
+        return
+    reviewer = st.text_input('Your name (reviewer)', key='pptx_reviewer')
+    left, right = st.columns(2)
+    with left.form(f'approve_pptx:{revision}'):
+        st.caption('Approve after opening the PPTX and checking every slide and open point.')
+        approve = st.form_submit_button('✅ Approve presentation')
+    with right.form(f'decline_pptx:{revision}'):
+        comment = st.text_area('What should change?', height=80)
+        decline = st.form_submit_button('❌ Decline with comment')
+    if (approve or decline) and _run(decks.decide, revision, reviewer, bool(approve), comment):
+        st.rerun()
