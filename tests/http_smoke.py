@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -17,7 +18,8 @@ def main():
         env = dict(os.environ, MESAKUMO_DATA_DIR=data_dir, MESAKUMO_PORT='18502', MESAKUMO_LLM_PROVIDER='disabled')
         app = None
         def start():
-            return subprocess.Popen([str(ROOT / '.venv/bin/python'), '-m', 'mesakumo'], cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
+            return subprocess.Popen([sys.executable, '-m', 'mesakumo', '--legacy-http'],
+                                    cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
         def get(path='/'):
             return client.open('http://127.0.0.1:18502'+path, timeout=5)
         def ready():

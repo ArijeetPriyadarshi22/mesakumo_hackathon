@@ -118,7 +118,7 @@ class EvidenceTests(unittest.TestCase):
                 def widget(kind, label):
                     return next(w for w in getattr(app, kind) if w.label == label)
 
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
+                app = AppTest.from_file('mesakumo/legacy_streamlit.py').run()
                 app.sidebar.radio[0].set_value('Evidence Matching').run()
                 self.assertFalse(app.multiselect)
                 self.assertTrue(any('locked' in item.value for item in app.warning))
@@ -245,7 +245,7 @@ class EvidenceTests(unittest.TestCase):
                         self.assertEqual(len(drafting_calls), 1)
                         self.assertEqual(widget('text_input', 'Section title').value, 'Projektreferenz')
 
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
+                app = AppTest.from_file('mesakumo/legacy_streamlit.py').run()
                 widget('selectbox', 'Phase').select('offer').run()
                 app.sidebar.radio[0].set_value('Evidence Matching').run()
                 self.assertEqual(widget('multiselect', 'Select evidence files').value, [MAIN_DECK])

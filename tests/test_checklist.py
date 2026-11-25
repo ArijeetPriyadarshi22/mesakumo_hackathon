@@ -133,7 +133,7 @@ class ChecklistStreamlitTests(unittest.TestCase):
             project.revision+=1;store.save(project,rev)
             with patch.dict(os.environ,{'MESAKUMO_PARTICIPANT_DIR':tmp,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':data,'MESAKUMO_LLM_PROVIDER':'disabled'}):
                 def widget(app,kind,label): return next(w for w in getattr(app,kind) if w.label==label)
-                app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+                app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
                 widget(app,'selectbox','Requirement to edit').set_value('R-candidate-1').run()
                 widget(app,'text_area','Statement').set_value('Drei Workshops – geprüft')
@@ -180,7 +180,7 @@ class ChecklistStreamlitTests(unittest.TestCase):
                 csvrows=list(csv.DictReader(io.StringIO(approved['csv'].decode())))
                 self.assertEqual([r['requirement'] for r in csvrows],[r.text for r in store.load(project.id).requirements])
                 # New AppTest instance represents a fresh app session/process state.
-                app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+                app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
                 self.assertEqual(len(app.get('download_button')),1)
                 widget(app,'button','Continue to Evidence Matching').click().run()

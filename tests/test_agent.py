@@ -113,7 +113,7 @@ class AgentTests(unittest.TestCase):
                 # Separate UI DB: stable IDs match this fixture. Remove any previous fixture run.
                 import shutil
                 shutil.rmtree('data/test_agent_ui',ignore_errors=True)
-                app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+                app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
                 self.assertFalse(app.exception)
                 self.assertEqual(model.calls,0)
                 self.assertEqual([b.label for b in app.sidebar.button], ['Rescan', 'Start extraction'])
@@ -172,7 +172,7 @@ class AgentTests(unittest.TestCase):
         model=CoverageModel(fail_first=True)
         with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':'data/test_agent_retry_ui','MESAKUMO_LLM_PROVIDER':'disabled'}), patch('mesakumo.models.configured_model',return_value=model):
             shutil.rmtree('data/test_agent_retry_ui',ignore_errors=True)
-            app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+            app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
             self.assertFalse(app.exception); self.assertEqual(model.calls,0)
             next(b for b in app.button if b.label=='Start extraction').click().run()
             self.assertFalse(app.exception); self.assertEqual(model.calls,1)
@@ -238,7 +238,7 @@ class AgentTests(unittest.TestCase):
         with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,
                 'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':folder,'MESAKUMO_LLM_PROVIDER':'disabled'}), patch(
                 'mesakumo.models.configured_model',return_value=model):
-            app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+            app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
             app.sidebar.radio[0].set_value('Evidence Matching').run()
             self.assertEqual(model.calls,0)
             next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()

@@ -523,3 +523,11 @@ Launch: `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.ad
 Manual check: restart, open page 1, confirm checklist headers appear immediately,
 expand edit/source/details as needed, and use Retry failed extraction to replace a
 saved failure with a fresh attempt/specific diagnostic. No later-task implementation.
+
+## Automated redesign
+
+The `feat/automated-tender-workflow` branch adds a persistent Projects workspace,
+restart-safe preparation, structured extraction and evidence, an editable slide plan,
+checksum approval, and a reviewer outbox. The baseline, each phase's output and file
+map, tests, offline timings, acceptance gaps, and manual release check are in
+[REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md).

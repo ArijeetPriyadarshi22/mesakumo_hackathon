@@ -22,7 +22,7 @@ MAX_FILE_BYTES = 15 * 1024 * 1024
 ROLES = ('tender', 'knowledge', 'text_module', 'template')
 
 class LocalProcessor:
-    def extract(self, path, document_id):
+    def extract(self, path, document_id, *, gaps=None):
         suffix = path.suffix.lower()
         with path.open('rb') as file:
             version = hashlib.file_digest(file, 'sha256').hexdigest()
@@ -41,10 +41,22 @@ class LocalProcessor:
             if reader.is_encrypted and not reader.decrypt(''):
                 raise ValueError('Encrypted PDF: supply an unencrypted copy.')
             for index, page in enumerate(reader.pages, 1):
-                text = page.extract_text() or ''
+                try:
+                    text = page.extract_text() or ''
+                except Exception:
+                    if gaps is None:
+                        raise
+                    text = ''
+                location = f'Page {index}'
                 if not text.strip():
-                    raise ValueError(f'PDF page {index} has no extractable text; possible scan. OCR is not supported. No pages included.')
-                chunks.append((f'Page {index}', text))
+                    if gaps is None:
+                        raise ValueError(f'PDF page {index} has no extractable text; possible scan. OCR is not supported. No pages included.')
+                    text = _ocr(path, index)
+                    if not text.strip():
+                        gaps.append(f'{location}: no extractable text or local OCR result.')
+                        continue
+                    location += ' (OCR)'
+                chunks.append((location, text))
         elif suffix == '.xlsx':
             ns = {'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
             with zipfile.ZipFile(path) as archive:
@@ -112,6 +124,29 @@ class LocalProcessor:
         if not passages:
             raise ValueError('No readable text found. Empty documents and scans are not analysed.')
         return passages
+
+
+def _ocr(path, page):
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    render, ocr = shutil.which('pdftoppm'), shutil.which('tesseract')
+    if not render or not ocr:
+        return ''
+    with tempfile.TemporaryDirectory() as folder:
+        image = Path(folder) / 'page'
+        try:
+            subprocess.run([render, '-f', str(page), '-l', str(page), '-r', '180',
+                            '-singlefile', '-png', str(path), str(image)],
+                           check=True, timeout=30, capture_output=True)
+            result = subprocess.run([ocr, str(image.with_suffix('.png')), 'stdout', '-l',
+                                     os.environ.get('MESAKUMO_OCR_LANGUAGES') or 'deu+eng'],
+                                    check=True, timeout=40, capture_output=True, encoding='utf-8')
+            return result.stdout
+        except (OSError, subprocess.SubprocessError):
+            return ''
 
 def presentation_text(path):
     """Read slide text in presentation order without expanding media."""

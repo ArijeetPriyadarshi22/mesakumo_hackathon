@@ -107,7 +107,7 @@ def main(argv=None):
         parser.error(str(exc))
 
     env = dict(os.environ, MESAKUMO_DATA_DIR=str(workspace), MESAKUMO_KEEP_SESSION='yes',
-               MESAKUMO_INITIAL_TENDER=tender.name, MESAKUMO_PARTICIPANT_DIR=str(directory))
+               MESAKUMO_LEGACY_STREAMLIT='yes', MESAKUMO_INITIAL_TENDER=tender.name, MESAKUMO_PARTICIPANT_DIR=str(directory))
     if not args.enable_model:
         env['MESAKUMO_LLM_PROVIDER'] = 'disabled'
     print(f'Opening {tender.name} from {database}', flush=True)

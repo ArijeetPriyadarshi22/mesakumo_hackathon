@@ -23,6 +23,7 @@ class RequestyModel:
         if not model.strip() or not api_key.strip():
             raise ModelUnavailable('Set the Mesakumo-approved Claude model ID and API key.')
         self.model = model
+        self.usage = {}
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key,
@@ -58,6 +59,7 @@ class RequestyModel:
 
     def _complete(self, prompt, response_format=None, *, evidence=False, overview=False,
                   system=None, max_tokens=None):
+        self.usage = {}
         try:
             options = {'response_format':response_format} if response_format else {}
             task = 'Assess tender evidence only.' if evidence else 'Extract tender requirements only.'
@@ -77,6 +79,12 @@ class RequestyModel:
                 temperature=0,
                 **options,
             )
+            usage = getattr(response, 'usage', None)
+            self.usage = {
+                'input': getattr(usage, 'prompt_tokens', None),
+                'output': getattr(usage, 'completion_tokens', None),
+                'thinking': getattr(getattr(usage, 'completion_tokens_details', None), 'reasoning_tokens', None),
+            }
             if len(response.model_dump_json().encode()) > 2_000_000:
                 raise ModelUnavailable('Provider response exceeds the size limit.')
             choice = response.choices[0]
@@ -98,6 +106,13 @@ def configured_model():
     # REQUESTY_API_KEY is the name used in the Team 1 document.
     key = os.environ.get('REQUESTY_API_KEY') or os.environ.get('MESAKUMO_LLM_API_KEY', '')
     provider = os.environ.get('MESAKUMO_LLM_PROVIDER', 'requesty' if key else 'disabled')
+    if provider == 'gemini':
+        from .gemini import GeminiModel
+
+        if os.environ.get('MESAKUMO_LLM_APPROVED') != 'yes':
+            return DisabledModel()
+        return GeminiModel(os.environ.get('MESAKUMO_LLM_MODEL') or 'gemini-3.5-flash-lite',
+                           os.environ.get('GEMINI_API_KEY') or '')
     if provider != 'requesty' or os.environ.get('MESAKUMO_LLM_APPROVED', 'yes' if os.environ.get('REQUESTY_API_KEY') else 'no') != 'yes':
         return DisabledModel()
     return RequestyModel(

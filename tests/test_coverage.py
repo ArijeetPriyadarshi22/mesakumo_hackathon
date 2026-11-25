@@ -77,7 +77,7 @@ class TenderIsolationTests(unittest.TestCase):
             with patch.dict(os.environ,{'MESAKUMO_PARTICIPANT_DIR':tmp,'MESAKUMO_LLM_PROVIDER':'disabled'}),patch('mesakumo.models.configured_model',return_value=Model()):
                 previous=os.environ.pop('MESAKUMO_DATA_DIR',None)
                 try:
-                    app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+                    app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
                     workspace=app.session_state['fresh_workspace_v3']
                     next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()
                     self.assertIn('FIRST UNIQUE',str(app.dataframe[0].value))
@@ -88,7 +88,7 @@ class TenderIsolationTests(unittest.TestCase):
                     self.assertIn('SECOND UNIQUE',str(app.dataframe[0].value))
                     self.assertNotIn('FIRST UNIQUE',str(app.dataframe[0].value))
                     self.assertEqual(app.subheader[0].value,'Ausschreibung 2 · single')
-                    fresh=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
+                    fresh=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
                     self.assertNotEqual(fresh.session_state['fresh_workspace_v3'],workspace)
                     self.assertEqual(len(fresh.dataframe[0].value),0)
                 finally:

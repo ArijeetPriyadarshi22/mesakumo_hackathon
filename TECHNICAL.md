@@ -1,5 +1,34 @@
 # TenderWorkbench technical handoff
 
+## Automated workspace
+
+Install the pinned libraries with `python -m pip install -r requirements.txt`, then
+launch from the checkout with `python -m mesakumo`. It listens on
+`127.0.0.1:8501`. Choose the local participant folder in **Local folders and
+language**, select the projects and phases, and choose **Prepare proposals**.
+The workspace persists across browser sessions. It defaults to
+`%LOCALAPPDATA%\TenderWorkbench` on Windows and
+`${XDG_DATA_HOME:-$HOME/.local/share}/TenderWorkbench` on POSIX systems.
+Use `MESAKUMO_AUTOMATION_DIR` to choose another writable workspace.
+
+Set `MESAKUMO_LLM_PROVIDER=gemini`, `MESAKUMO_LLM_APPROVED=yes`, and export an
+approved `GEMINI_API_KEY` for Gemini. Set `MESAKUMO_LLM_MODEL` to the model ID
+enabled for your account. Requesty remains available via its existing settings.
+See [.env.example](.env.example) for quota, OCR, renderer, and delivery options.
+With the provider disabled, saved work remains accessible and text-only deck
+rendering can use a current saved proposal.
+
+Project links use `?project=<id>&tab=review` and resolve on the same workstation
+and port. The UI starts a worker on first load. Use `python -m mesakumo --worker`
+to process the queue independently of browser sessions and pass the same
+`--port` used by the UI so review links retain their destination.
+
+[REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md) maps the current flow
+to its files and includes each phase's verification and outstanding acceptance
+checks. The remaining sections document the original manual workflow and its
+saved workspaces. Open it with `MESAKUMO_LEGACY_STREAMLIT=yes`; the Tender 2
+resume command below selects it automatically.
+
 ## Purpose
 
 TenderWorkbench is a local Streamlit workspace for German public tenders. It takes a
@@ -30,6 +59,7 @@ the output back to its inputs.
 
    ```sh
    export MESAKUMO_PARTICIPANT_DIR="/absolute/path/to/participant-pack"
+   export MESAKUMO_LEGACY_STREAMLIT=yes
    export MESAKUMO_KEEP_SESSION=yes
    export MESAKUMO_LLM_PROVIDER=disabled
    python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
@@ -56,7 +86,7 @@ The main database is `workspace.sqlite3`. Without
 opening tender and page. With an existing Tender 2 workspace, run
 `python -m mesakumo.resume_tender2 --help` for the saved-session launcher.
 It copies or reopens a workspace and defaults to port 8505 with model calls
-disabled. `python -m mesakumo` starts the older local HTTP interface, which
+disabled. `python -m mesakumo --legacy-http` starts the older local HTTP interface, which
 uses `MESAKUMO_PORT`. The four-page workflow uses Streamlit.
 
 ## Architecture and data flow

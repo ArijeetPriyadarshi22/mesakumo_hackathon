@@ -97,7 +97,7 @@ class TenderOverviewTests(unittest.TestCase):
             with patch.dict('os.environ', {'MESAKUMO_PARTICIPANT_DIR': folder, 'MESAKUMO_DATA_DIR': data,
                                           'MESAKUMO_KEEP_SESSION': 'no', 'MESAKUMO_LLM_PROVIDER': 'disabled'}), patch(
                                               'mesakumo.models.configured_model', return_value=model):
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
+                app = AppTest.from_file('mesakumo/legacy_streamlit.py').run()
                 self.assertEqual(model.calls, 0)
                 next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()
                 self.assertFalse(app.exception)
@@ -108,7 +108,7 @@ class TenderOverviewTests(unittest.TestCase):
                 self.assertTrue(any('Widersprüchliche' in item.value for item in app.warning))
                 self.assertTrue(any('nicht gefunden' in item.value for item in app.caption))
                 self.assertEqual(model.calls, 1)
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
+                app = AppTest.from_file('mesakumo/legacy_streamlit.py').run()
                 self.assertTrue(any('Drei Workshops für die Stadt Nord.' == item.value for item in app.text))
                 self.assertEqual(model.calls, 1)
                 next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()

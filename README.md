@@ -1,5 +1,5 @@
 # TenderWorkbench
 
-TenderWorkbench is a local Streamlit app for reviewing German tender requirements, matching them to selected historical evidence, and drafting proposal sections. It keeps source references and open items attached to the work and exports the saved proposal as a PowerPoint deck.
+TenderWorkbench prepares local tenders for review in a persistent Streamlit workspace. It extracts cited requirements, matches historical proof, drafts editable slide groups, and binds final approval to the exact PowerPoint bytes.
 
-See [TECHNICAL.md](TECHNICAL.md) for setup, model configuration, and the developer handoff.
+Run `python -m mesakumo` after installing `requirements.txt`. See [TECHNICAL.md](TECHNICAL.md) for setup and [REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md) for the phase-by-phase implementation and verification.
