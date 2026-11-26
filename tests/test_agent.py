@@ -2,7 +2,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 from mesakumo.agent import ExtractionRuns, sources, merge_candidates, possible_conflicts
 from mesakumo.discovery import open_selection
 from mesakumo.persistence import ProjectStore
@@ -14,22 +13,6 @@ class Scripted:
         self.calls+=1; self.prompts.append(prompt)
         action=next(self.actions)
         return json.dumps(action(prompt) if callable(action) else action)
-
-class CoverageModel:
-    def __init__(self, fail_first=False): self.calls=0; self.fail_first=fail_first
-    def complete_overview(self, prompt, schema):
-        from mesakumo.models import ModelUnavailable
-        raise ModelUnavailable('Synthetic overview unavailable')
-    def complete(self,prompt):
-        from mesakumo.models import ModelUnavailable
-        self.calls+=1
-        if self.fail_first and self.calls==1:
-            raise ModelUnavailable('Synthetic provider failure')
-        group=json.loads(prompt.split('Sources:\n')[1].split('\nPrevious response')[0])
-        ref=next(ref for ref,b in group.items() if 'three workshops' in b['text'])
-        return json.dumps({'requirements':[{'statement':'Exactly three workshops are mandatory.',
-            'evidence_ids':[ref],
-            'kind':'deliverable','constraints':['three']}]})
 
 def action(tool,**args): return {'tool':tool,'args':args}
 
@@ -96,41 +79,6 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(len(rows),2);self.assertEqual(a.source_ids,['x','y'])
         self.assertTrue(possible_conflicts(rows))
 
-    def test_streamlit_no_calls_on_reopen(self):
-        from streamlit.testing.v1 import AppTest
-        class BusyModel(CoverageModel):
-            def complete(inner, prompt):
-                import streamlit as st
-                self.assertTrue(st.session_state.extraction_busy)
-                return super().complete(prompt)
-        model=BusyModel()
-        other=Path(self.tmp.name)/'Ausschreibung 3'
-        other.mkdir()
-        (other/'specification.txt').write_text('A separate tender.')
-        # Use actual UI-selected project created from this fixture; keep SQLite isolated.
-        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':'data/test_agent_ui','MESAKUMO_LLM_PROVIDER':'disabled'}):
-            with patch('mesakumo.models.configured_model',return_value=model):
-                # Separate UI DB: stable IDs match this fixture. Remove any previous fixture run.
-                import shutil
-                shutil.rmtree('data/test_agent_ui',ignore_errors=True)
-                app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
-                self.assertFalse(app.exception)
-                self.assertEqual(model.calls,0)
-                self.assertEqual([b.label for b in app.sidebar.button], ['Rescan', 'Start extraction'])
-                app.run(); self.assertEqual(model.calls,0)
-                tender=next(w for w in app.selectbox if w.label=='Tender pack')
-                tender.select('Ausschreibung 3').run()
-                self.assertFalse(app.exception); self.assertEqual(model.calls,0)
-                next(w for w in app.selectbox if w.label=='Tender pack').select('Ausschreibung 2 - mit Partner').run()
-                self.assertFalse(app.exception); self.assertEqual(model.calls,0)
-                next(b for b in app.button if b.label=='Start extraction').click().run()
-                self.assertFalse(app.exception)
-                calls=model.calls
-                self.assertFalse(app.session_state['extraction_busy'])
-                self.assertFalse(next(w for w in app.selectbox if w.label=='Tender pack').disabled)
-                self.assertEqual(calls,1)
-                app.run();self.assertFalse(app.exception);self.assertEqual(model.calls,calls)
-
     def test_foreign_scope_and_unread_batch_rejected(self):
         model=Scripted([action('read_tender_passages',document_id='other-phase-document',offset=0)])
         result=self.runs.ensure(self.project,self.rows,model)
@@ -165,24 +113,6 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result['status'],'partial')
         self.assertEqual(len(result['read']),len(set(result['read'])))
         self.assertTrue(all(len(p.encode())+1000<=48000 for p in model.prompts))
-
-    def test_streamlit_failure_retry_button(self):
-        from streamlit.testing.v1 import AppTest
-        import shutil
-        model=CoverageModel(fail_first=True)
-        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':'data/test_agent_retry_ui','MESAKUMO_LLM_PROVIDER':'disabled'}), patch('mesakumo.models.configured_model',return_value=model):
-            shutil.rmtree('data/test_agent_retry_ui',ignore_errors=True)
-            app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
-            self.assertFalse(app.exception); self.assertEqual(model.calls,0)
-            next(b for b in app.button if b.label=='Start extraction').click().run()
-            self.assertFalse(app.exception); self.assertEqual(model.calls,1)
-            self.assertFalse(app.session_state['extraction_busy'])
-            self.assertFalse(next(w for w in app.radio if w.label=='Page').disabled)
-            app.run();self.assertEqual(model.calls,1)
-            button=next(b for b in app.button if b.label=='Start extraction')
-            button.click().run()
-            self.assertFalse(app.exception);self.assertEqual(model.calls,2)
-            app.run();self.assertEqual(model.calls,2)
 
     def test_fenced_json_action_keeps_validation(self):
         from mesakumo.agent import parse_action
@@ -227,21 +157,3 @@ class AgentTests(unittest.TestCase):
         self.assertIn('time',events[-1])
         self.assertNotIn('Synthetic obligation',json.dumps(events))
         self.assertEqual(result['trace'][-1]['stage'],'submitting')
-
-    def test_sidebar_start_from_another_page(self):
-        from streamlit.testing.v1 import AppTest
-        import shutil
-        model=CoverageModel()
-        folder='data/test_sidebar_start_ui'
-        self.addCleanup(shutil.rmtree,folder,True)
-        shutil.rmtree(folder,ignore_errors=True)
-        with patch.dict('os.environ',{'MESAKUMO_PARTICIPANT_DIR':self.tmp.name,
-                'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR':folder,'MESAKUMO_LLM_PROVIDER':'disabled'}), patch(
-                'mesakumo.models.configured_model',return_value=model):
-            app=AppTest.from_file('mesakumo/legacy_streamlit.py',default_timeout=30).run()
-            app.sidebar.radio[0].set_value('Evidence Matching').run()
-            self.assertEqual(model.calls,0)
-            next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()
-            self.assertFalse(app.exception)
-            self.assertEqual(model.calls,1)
-            self.assertEqual(app.sidebar.radio[0].value,'Tender Requirements')

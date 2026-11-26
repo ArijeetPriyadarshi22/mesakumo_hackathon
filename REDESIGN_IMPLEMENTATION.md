@@ -2,13 +2,13 @@
 
 **Branch** `feat/automated-tender-workflow`, based on `main` at `f2d1651`.
 
-The new default entry point is `python -m mesakumo`. It opens the persistent Projects workspace on loopback. A single **Prepare proposals** action queues the selected tender phases. The worker validates and saves the requirements, evidence, and proposal content, renders a draft, and leaves the consultant one approval of the current PowerPoint checksum. The original review flow and demo databases remain accessible through the legacy launcher.
+The entry point is `python -m mesakumo`. It opens the persistent Projects workspace on loopback. A single **Prepare proposals** action queues the selected tender phases. The worker validates and saves the requirements, evidence, and proposal content, renders a draft, and leaves the consultant one approval of the current PowerPoint checksum. Earlier manual workspace databases use a separate format. To work on the same tenders, select their source pack and prepare them in the automated workspace.
 
 ## Run the new workflow
 
 1. Install the pinned requirements with `python -m pip install -r requirements.txt`.
 2. Set the approved provider in your shell. For Gemini, export `MESAKUMO_LLM_PROVIDER=gemini`, `MESAKUMO_LLM_APPROVED=yes`, `GEMINI_API_KEY`, and the model ID enabled for your project in `MESAKUMO_LLM_MODEL`. The fallback Gemini model ID is `gemini-3.5-flash-lite`. Requesty retains its existing EU configuration. Provider calls send selected excerpts and metadata.
-3. Run `python -m mesakumo`. Open **Local folders and language**, choose the directory containing the `Ausschreibung` folders and `Angebotstemplate.pptx`, and save. Use **Prepare proposals** on one project or a selection. To work with a saved demo in the old UI, run `python -m mesakumo.resume_tender2`.
+3. Run `python -m mesakumo`. Open **Local folders and language**, choose the directory containing the `Ausschreibung` folders and `Angebotstemplate.pptx`, and save. Use **Prepare proposals** on one project or a selection.
 4. Open the project when a draft is ready. Use the linked Requirements, Evidence and Proposal screens to resolve blockers. Use **Regenerate from saved slides** after wording-only edits, or **Prepare proposals** after changes to criteria or proof. Review the draft under **Final review**, approve its checksum, and choose **Verify approved download** before downloading.
 
 The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG_DATA_HOME:-$HOME/.local/share}/TenderWorkbench` on POSIX systems. `MESAKUMO_AUTOMATION_DIR` overrides the default. The review URL uses `http://localhost:8501/?project=<id>&tab=review` and points to the same workspace when the local app runs again on the same port. Keep the app running to continue a job after closing the browser. `python -m mesakumo --worker` can run the worker independently. Set the same `--port` on both processes if you change it.
@@ -32,17 +32,17 @@ The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG
 
 **Tender inputs.** Tender 2's `VDI_TZ_3` service description on pages 4–7 separates research work packages and their outputs. Tender 3's participation instructions and selection criteria are outside the offer ZIP. The offer ZIP has nine members. Historical documents, credentials, workspace databases and generated decks are excluded from the implementation changes. The reported live drafting and PowerPoint failures were outside the baseline reproduction.
 
-[Baseline probe](tests/baseline_redesign.py) · [Legacy UI export checks](tests/test_final_export.py) · [Hand-labeled evaluation cases](tests/fixtures/redesign_evaluation.json)
+[Baseline probe](tests/baseline_redesign.py) · [Hand-labeled evaluation cases](tests/fixtures/redesign_evaluation.json)
 
 ## Phase 1 · Project launcher and persistent jobs
 
-**Output.** Projects can be opened in a second browser session and after restarting the app. A project ID is derived from the resolved root, tender folder and phase. An explicitly declared offer archive, `Offer.zip`, or the supplied Tender 3 offer archive indicates distinct participation and offer jobs. Ordinary supporting archives stay in their tender. The same tender folder name in two roots produces independent projects. The launcher has an explicit route for the old Streamlit UI and for the old HTTP shell.
+**Output.** Projects can be opened in a second browser session and after restarting the app. A project ID is derived from the resolved root, tender folder and phase. An explicitly declared offer archive, `Offer.zip`, or the supplied Tender 3 offer archive indicates distinct participation and offer jobs. Ordinary supporting archives stay in their tender. The same tender folder name in two roots produces independent projects.
 
-**Logic.** `automation_store.py` extends the existing SQLite store with settings, current projects, immutable revision snapshots, jobs, work units, model metrics and outbox tables. An immediate transaction serializes claims and duplicate enqueues. The worker checks the lease token before publishing a unit or revision and extends the lease while processing. Expired jobs can be reclaimed and completed units are reused on restart. The UI uses query parameters and status polling. Old saved workflows use the original database format via `legacy_streamlit.py` and `resume_tender2.py`. Opening a legacy workspace is the explicit compatibility path. Automated runs re-extract the current criteria before evidence matching.
+**Logic.** `automation_store.py` extends the existing SQLite store with settings, current projects, immutable revision snapshots, jobs, work units, model metrics and outbox tables. An immediate transaction serializes claims and duplicate enqueues. The worker checks the lease token before publishing a unit or revision and extends the lease while processing. Expired jobs can be reclaimed and completed units are reused on restart. The UI uses query parameters and status polling. Automated runs re-extract the current criteria before evidence matching.
 
 **Verification.** Tested competing enqueues and claims across threads, reclaim with an expired token, reopening in independent Streamlit test sessions, unknown project handling, root isolation, and duplicate phase selection. A real process launched at port 18501 returned a healthy response and listened on localhost only.
 
-[Store and claims](mesakumo/automation_store.py) · [Worker](mesakumo/automation.py) · [Streamlit entry point](mesakumo/streamlit_app.py) · [Legacy resume](mesakumo/resume_tender2.py)
+[Store and claims](mesakumo/automation_store.py) · [Worker](mesakumo/automation.py) · [Streamlit entry point](mesakumo/streamlit_app.py)
 
 ## Phase 2 · Model adapter, source reading and requirement classification
 
@@ -52,7 +52,7 @@ The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG
 
 `automation_requirements.py` runs per-file batches over a versioned manifest. The default source budget is 16,000 serialized bytes per batch before prompt and schema overhead. Candidate and fact source IDs are checked locally. Procurement portal submissions are routed to administrative current actions. Rated criteria retain scored status. Uncertain candidates get a focused classification attempt using their cited passages. Consolidation merges normalized equivalents when classification and conditions agree. It sends closely worded pairs for a separate equivalence judgment only when their conditions, numbers, date terms and polarity match. Explicitly identifying replacement language in an amendment can retire a matching clause while retaining the older source and conditions in the reviewer view. Ambiguous variants and conflicting facts remain visible. Auto uses the tender's cited submission language when available and keeps requirements in their source language. German and English are supported. Confirm an explicit setting if automatic selection remains unresolved.
 
-The automated reader in `documents.py` retains readable PDF pages, reports page-level gaps, and tries local OCR when `pdftoppm` and Tesseract are available. Legacy parsers retain their previous entry-point behavior. Citations preserve exact file, version, locator and original excerpt. The renderer and reviewer see the same saved references.
+The automated reader in `documents.py` retains readable PDF pages, reports page-level gaps, and tries local OCR when `pdftoppm` and Tesseract are available. Citations preserve exact file, version, locator and original excerpt. The renderer and reviewer see the same saved references.
 
 **Verification.** Mocked native Gemini 429, invalid JSON, 403 and output truncation. Tested usage accounting, retry from a saved checkpoint, bilingual portal routing, scored proof routing, explicit amendment precedence, distinct conditions, and mixed readable/blank PDF pages. Live model access, model quality and OCR accuracy on scans remain pilot checks. [Gemini structured output documentation](https://ai.google.dev/gemini-api/docs/structured-output)
 

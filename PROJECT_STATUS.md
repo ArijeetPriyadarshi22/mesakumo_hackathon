@@ -1,17 +1,19 @@
-# Current implementation state
+# Historical implementation state
 
 Updated 21 November 2026. Pages 1 through 4 now support the Streamlit
 flow from tender requirements to a reviewed corporate PPTX.
 
-Launch with `.venv/bin/python -m streamlit run mesakumo/streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`.
-The legacy CLI remains available separately via `.venv/bin/python -m mesakumo`.
+This page records the retired manual interface. Launch the current automated
+workspace with `.venv/bin/python -m mesakumo`.
+[Current setup guide](TECHNICAL.md)
 
 Page 1 schedules readable tender batches, shows coverage gaps, and makes
 requirements searchable with their original source excerpts. Reviewers can
 edit, add, or remove rows and use Approve and Save to commit the checklist
 snapshot and CSV together. The CSV header is `requirement`. Approval is tied to
 the project, revision, fingerprint and source snapshot. New browser sessions
-start fresh by default. Set `MESAKUMO_KEEP_SESSION=yes` to restore a workspace.
+started fresh by default. The manual interface had a setting for restoring a
+workspace across sessions.
 
 Page 2 uses the saved approval to display the same project, phase, revision
 and requirement IDs. Use Continue to Evidence Matching after saving approval.
@@ -37,7 +39,6 @@ has one row per requirement, matches the review table, and carries gap/action
 notes and structured citations. Page 3 drafts and reviews sections for a current checklist and evidence approval.
 It keeps gaps open until a reviewer records their resolution and requires
 citation reconfirmation when prose is edited.
-Reopen the same workspace by enabling `MESAKUMO_KEEP_SESSION=yes`.
 
 Earlier Page 2 automated and scripted checks and the legacy HTTP smoke test passed. The Streamlit flow verified editing, downloads, reopen, rollback and
 approval invalidation. The main reference deck yielded 64 text passages in the

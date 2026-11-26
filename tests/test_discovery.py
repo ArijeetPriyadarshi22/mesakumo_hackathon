@@ -29,19 +29,3 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(len(b.documents), 2)
             self.assertEqual(len(store.list_projects()), 2)
             self.assertTrue(any('alias' in r['status'] for r in rows))
-
-    def test_streamlit_entry(self):
-        from streamlit.testing.v1 import AppTest
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / 'Ausschreibung 1').mkdir()
-            with patch.dict('os.environ', {'MESAKUMO_PARTICIPANT_DIR': tmp, 'MESAKUMO_KEEP_SESSION':'yes','MESAKUMO_DATA_DIR': 'data/test_streamlit'}):
-                app = AppTest.from_file('mesakumo/legacy_streamlit.py', default_timeout=30).run()
-                self.assertFalse(app.exception)
-                self.assertEqual(app.title[0].value, 'Tender Requirements')
-                self.assertEqual(list(app.dataframe[0].value.columns),
-                    ['requirement','category','obligation_level','exact_constraints','source_references','requirement_id'])
-                self.assertEqual(len(app.dataframe[0].value),0)
-                self.assertLess(len(app.expander),10)
-                app.sidebar.radio[0].set_value('Evidence Matching').run()
-                self.assertFalse(app.exception)
