@@ -1,6 +1,8 @@
 """Local-only tender discovery. Never imports a model adapter."""
 import csv
 import hashlib
+import io
+import json
 import os
 import re
 import tempfile
@@ -28,30 +30,70 @@ def inventory():
     with (ROOT / 'Mesakumo_Document_Inventory.csv').open(encoding='utf-8-sig', newline='') as f:
         return {unicodedata.normalize('NFC', r['Path relative to participant input folder'].replace(' / ', '!/')): r['Primary role'] for r in csv.DictReader(f)}
 
-def scan(pack, phase):
+PHASE_FILE = '.tender-phases.json'
+
+
+def offer_archives(pack):
+    marker = pack / PHASE_FILE
+    if marker.is_symlink():
+        raise ValueError('The tender phase declaration must be a local file.')
+    if marker.is_file():
+        try:
+            config = json.loads(marker.read_text(encoding='utf-8'))
+            archives = config['offer_archives']
+            if (not isinstance(archives, list) or any(
+                not isinstance(name, str) or not name.lower().endswith('.zip') or
+                Path(name).is_absolute() or '..' in Path(name).parts or '\\' in name
+                for name in archives
+            )):
+                raise ValueError
+            return set(archives)
+        except (ValueError, TypeError, KeyError, OSError):
+            raise ValueError(f'Invalid {PHASE_FILE} in {pack.name}. Specify relative ZIP paths in offer_archives.') from None
+    return {
+        path.relative_to(pack).as_posix() for path in pack.rglob('*')
+        if path.is_file() and not path.is_symlink()
+        and not any(part.startswith('.') for part in path.relative_to(pack).parts)
+        and unicodedata.normalize('NFC', path.name).casefold() in ('unterlage für die angebotsphase.zip', 'offer.zip')
+    }
+
+
+def scan(pack, phase, *, phase_archives=None, capture=True):
     """Return actual files plus applicable ZIP members; keep aliases visible."""
     roles = inventory()
+    archive_policy = phase_archives is not None
     rows = []
-    def add(name, content=None, error=''):
+    def add(name, content=None, error='', version=None):
         role = roles.get(unicodedata.normalize('NFC', pack.name + '/' + name), 'Unclassified — inspect manually')
         if name.endswith('Leistungsverzeichnis.aidf'): role = 'Buyer submission form'
         if name.endswith('Leistungsverzeichnis.pdf'): role = 'Readable schedule'
         if name == 'Bearbeitungshinweis.txt': role = 'Internal hackathon guidance'
-        rows.append(dict(path=name, role=role, content=content, error=error, inventory='Listed' if unicodedata.normalize('NFC', pack.name + '/' + name) in roles else 'Actual file absent from CSV'))
+        if not capture:
+            version = hashlib.sha256(content).hexdigest() if content is not None else version
+            content = None
+        rows.append(dict(path=name, role=role, content=content, error=error, version=version, inventory='Listed' if unicodedata.normalize('NFC', pack.name + '/' + name) in roles else 'Actual file absent from CSV'))
     for path in sorted(pack.rglob('*')):
         if not path.is_file() or path.is_symlink() or any(s.startswith('.') for s in path.relative_to(pack).parts): continue
         name = path.relative_to(pack).as_posix()
+        if archive_policy and name in phase_archives and phase != 'offer':
+            continue
         try:
             if path.stat().st_size > MAX_FILE_BYTES: raise ValueError('File exceeds 15 MB local parsing limit')
+            expand = path.suffix.lower() == '.zip' and (archive_policy or phase == 'offer')
+            if not capture and not expand:
+                with path.open('rb') as handle:
+                    add(name, version=hashlib.file_digest(handle, 'sha256').hexdigest())
+                continue
             content = path.read_bytes()
             add(name, content)
-            if path.suffix.lower() == '.zip' and phase == 'offer':
+            if expand:
+                container = rows[-1]
                 try:
-                    with zipfile.ZipFile(path) as archive:
+                    with zipfile.ZipFile(io.BytesIO(content)) as archive:
                         if sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024: raise ValueError('ZIP expanded size exceeds 40 MB')
                         for member in sorted(archive.infolist(), key=lambda i: i.filename):
                             if not member.is_dir(): add(name + '!/' + member.filename, archive.read(member))
-                except Exception as exc: rows[-1]['error'] = 'Unreadable ZIP: ' + type(exc).__name__
+                except Exception as exc: container['error'] = 'Unreadable ZIP: ' + type(exc).__name__
         except Exception as exc: add(name, error=str(exc))
     return rows
 

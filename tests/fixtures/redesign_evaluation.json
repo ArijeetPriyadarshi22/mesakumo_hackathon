@@ -6,7 +6,9 @@
     "scope": "proposal",
     "response": "method",
     "chapter": "approach",
-    "check": "Group method steps while preserving their separate constraints."
+    "check": "Group method steps while preserving their separate constraints.",
+    "synthetic_source": "The tenderer shall describe a discovery workshop and how its results pass to the next work phase. Public project contact details are provided for questions.",
+    "obligation": "mandatory"
   },
   {
     "case": "SAP Change Management",
@@ -15,7 +17,9 @@
     "scope": "proposal",
     "response": "method",
     "chapter": "approach",
-    "check": "A scored narrative remains a criterion even when historical proof is unnecessary."
+    "check": "A scored narrative remains a criterion even when historical proof is unnecessary.",
+    "synthetic_source": "The buyer scores the proposed change approach. The proposal must explain separate stakeholder, training and governance workstreams.",
+    "obligation": "scored"
   },
   {
     "case": "Digitalisierungspaten",
@@ -24,7 +28,9 @@
     "scope": "administrative",
     "response": "current_action",
     "chapter": "annexes",
-    "check": "An earlier bid or certificate cannot confirm signatures for this tender."
+    "check": "An earlier bid or certificate cannot confirm signatures for this tender.",
+    "synthetic_source": "The bidder must include signed declarations with this submission. Earlier certificates can be listed as additional information.",
+    "obligation": "mandatory"
   },
   {
     "case": "Tender 2",
@@ -33,7 +39,9 @@
     "scope": "proposal",
     "response": "method",
     "chapter": "approach",
-    "check": "Method, deliverables and milestone conditions remain traceable to their work packages."
+    "check": "Method, deliverables and milestone conditions remain traceable to their work packages.",
+    "synthetic_source": "The proposal shall explain how qualitative interviews inform the combined study outputs. The originally published milestones still apply.",
+    "obligation": "mandatory"
   },
   {
     "case": "Tender 3 participation",
@@ -42,7 +50,9 @@
     "scope": "proposal",
     "response": "proof",
     "chapter": "annexes",
-    "check": "Distinguish the historical proof from the current submission action."
+    "check": "Distinguish the historical proof from the current submission action.",
+    "synthetic_source": "The participation application shall include prior experience references for comparable engagements.",
+    "obligation": "mandatory"
   },
   {
     "case": "Tender 3 offer",
@@ -51,7 +61,9 @@
     "scope": "administrative",
     "response": "current_action",
     "chapter": "annexes",
-    "check": "The participation manifest must exclude offer archive members."
+    "check": "The participation manifest must exclude offer archive members.",
+    "synthetic_source": "For the offer phase, bidders must use the separate offer package. Its nominal cover page only describes the procurement.",
+    "obligation": "mandatory"
   },
   {
     "case": "Translated holdout",
@@ -60,6 +72,8 @@
     "scope": "administrative",
     "response": "current_action",
     "chapter": "annexes",
-    "check": "Neither English nor German submission wording is routed to historical evidence."
+    "check": "Neither English nor German submission wording is routed to historical evidence.",
+    "synthetic_source": "The bidder must upload the bid through the procurement portal. The procedure identifier is provided on the cover.",
+    "obligation": "mandatory"
   }
 ]

@@ -6,7 +6,12 @@ Install the pinned libraries with `python -m pip install -r requirements.txt`, t
 launch from the checkout with `python -m mesakumo`. It listens on
 `127.0.0.1:8501`. Choose the local participant folder in **Local folders and
 language**, select the projects and phases, and choose **Prepare proposals**.
-The workspace persists across browser sessions. It defaults to
+The workspace persists across browser sessions. Ordinary supporting ZIPs stay
+with their tender. The supplied offer archive and `Offer.zip` indicate split
+participation and offer phases. An unfamiliar folder becomes a tender when
+it contains `.tender-phases.json`, with `{"offer_archives":[]}` for a single
+phase or relative ZIP paths for an offer phase. Existing project URLs remain
+valid if discovery changes. It defaults to
 `%LOCALAPPDATA%\TenderWorkbench` on Windows and
 `${XDG_DATA_HOME:-$HOME/.local/share}/TenderWorkbench` on POSIX systems.
 Use `MESAKUMO_AUTOMATION_DIR` to choose another writable workspace.
@@ -23,11 +28,173 @@ and port. The UI starts a worker on first load. Use `python -m mesakumo --worker
 to process the queue independently of browser sessions and pass the same
 `--port` used by the UI so review links retain their destination.
 
-[REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md) maps the current flow
-to its files and includes each phase's verification and outstanding acceptance
-checks. The remaining sections document the original manual workflow and its
+Use **Verify approved download** to compare current local inputs and issue
+the exact approved PowerPoint bytes. Opening Final review reads the stored
+revision without rehashing the corpus. See the [Windows setup guide](packaging/windows/README.md)
+for installer prerequisites.
+
+[REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md) maps the flow
+to its files. The [execution ledger](docs/reviews/automated-tender-workflow.md) records
+current verification and outstanding release checks. The remaining sections document the original manual workflow and its
 saved workspaces. Open it with `MESAKUMO_LEGACY_STREAMLIT=yes`; the Tender 2
 resume command below selects it automatically.
+
+## macOS setup for the automated workflow
+
+### Install Python dependencies
+
+From the repository root, use Python 3.11 or later. If `.venv` already exists, start with the dependency install command.
+
+```zsh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip check
+```
+
+The app reads exported environment variables from the shell that launches it.
+[.env.example](.env.example) lists the available settings. Enter credentials
+at the hidden Terminal prompts below and leave unused settings unset.
+
+### Enable live Gemini calls
+
+Get an API key for a Gemini project that can use the selected model. Use
+documents you are authorized to send to Gemini.
+[Google AI Studio API keys](https://aistudio.google.com/apikey)
+
+```zsh
+unset MESAKUMO_LEGACY_STREAMLIT
+export MESAKUMO_LLM_PROVIDER=gemini
+export MESAKUMO_LLM_APPROVED=yes
+export MESAKUMO_LLM_MODEL=gemini-3.5-flash-lite
+read -rs 'GEMINI_API_KEY?Paste your Gemini API key and press Enter: '
+echo
+export GEMINI_API_KEY
+```
+
+`gemini-3.5-flash-lite` is the app default. Set `MESAKUMO_LLM_MODEL`
+to the exact model ID enabled for your project if it differs.
+
+### Enable OCR for scanned PDFs
+
+If Terminal reports `zsh: command not found: brew`, install Homebrew using
+the official installer. It may prompt for your Mac administrator password.
+[Homebrew installation guide](https://brew.sh/)
+
+```zsh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Follow the installer's **Next steps** to add Homebrew to your shell profile.
+To load an existing installation into the current Terminal, run the
+`shellenv` command for your Mac. The default paths are shown below.
+
+```zsh
+# Apple Silicon
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# Intel Mac
+# eval "$(/usr/local/bin/brew shellenv)"
+```
+
+Verify that `brew --version` works, then run these commands in the same
+Terminal that will launch TenderWorkbench.
+
+```zsh
+brew install poppler tesseract tesseract-lang
+command -v pdftoppm tesseract
+tesseract --list-langs
+```
+
+The first check should print paths for both executables. The language list
+should contain `deu` and `eng`. The automated workflow uses `deu+eng`
+by default and tries OCR on pages without extractable text. Prepare a tender
+with a scanned PDF to test it. Extracted passages can show citations such as
+`Page 1 (OCR)`. If OCR produces no text, look for a reading gap for that page.
+[Poppler](https://formulae.brew.sh/formula/poppler) ·
+[Tesseract](https://formulae.brew.sh/formula/tesseract) ·
+[Tesseract language data](https://formulae.brew.sh/formula/tesseract-lang)
+
+### Enable the in-app PDF preview
+
+Install LibreOffice with Homebrew. [LibreOffice cask](https://formulae.brew.sh/cask/libreoffice)
+
+```zsh
+brew install --cask libreoffice
+/Applications/LibreOffice.app/Contents/MacOS/soffice --version
+```
+
+TenderWorkbench detects that standard location automatically. For a custom
+installation, export `MESAKUMO_SOFFICE` with the full path to the `soffice`
+executable. Once a draft exists, open **Final review** and click **Load deck
+preview**. Draft and approved PowerPoint downloads are available independently
+of the preview renderer.
+
+### Enable review emails
+
+Use an SMTP account that supports implicit TLS, typically on port `465`.
+TenderWorkbench uses `SMTP_SSL` and validates the server certificate.
+[RFC 8314](https://www.rfc-editor.org/rfc/rfc8314#section-3.3)
+
+For a local test with Gmail, enable 2-Step Verification and create an App
+Password if your account supports it. The example sends both review and
+triage notifications to your own inbox. Replace the address and use your
+provider's host, implicit TLS port, and credentials if you use a different
+service.
+[Google SMTP settings](https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app) ·
+[Google App Password instructions](https://support.google.com/accounts/answer/185833)
+
+For routine team use, use an organization-managed SMTP relay or a dedicated
+application sender. Use a send-only credential where the provider supports it,
+store it in your deployment's secret store, and rotate it independently of
+personal account credentials. The built-in transport supports SMTP username
+and password authentication. Gmail OAuth requires an additional integration.
+[Gmail SMTP authentication](https://developers.google.com/workspace/gmail/imap/imap-smtp)
+
+```zsh
+export MESAKUMO_SMTP_HOST=smtp.gmail.com
+export MESAKUMO_SMTP_PORT=465
+export MESAKUMO_SMTP_USER='your-address@gmail.com'
+export MESAKUMO_SMTP_SENDER="$MESAKUMO_SMTP_USER"
+export MESAKUMO_REVIEW_RECIPIENT="$MESAKUMO_SMTP_USER"
+export MESAKUMO_TRIAGE_RECIPIENT="$MESAKUMO_SMTP_USER"
+read -rs 'MESAKUMO_SMTP_PASSWORD?Paste your SMTP app password and press Enter: '
+echo
+export MESAKUMO_SMTP_PASSWORD
+```
+
+The review address receives notifications when a reviewer is assigned. The
+triage address receives them when there is no reviewer match. If you prefer
+to set the addresses in the app, leave the two recipient variables unset
+and save the addresses under **Local folders and language**.
+
+The worker queues a notification when a draft deck is generated. In **Final
+review**, look for **Notification** with the delivery state and attempt count.
+When it shows `sent`, check your inbox for **Tender proposal ready for
+review**. The link opens the local workspace on the Mac running the app.
+
+### Launch and test the full workflow
+
+If the app is already running, stop it with `Ctrl+C`. To test against a fresh
+workspace, optionally run the first command below. Omit it to use your
+configured or default workspace.
+
+```zsh
+export MESAKUMO_AUTOMATION_DIR="$(mktemp -d /tmp/mesakumo-live.XXXXXX)"
+.venv/bin/python -m mesakumo
+```
+
+1. Open [http://127.0.0.1:8501](http://127.0.0.1:8501). Under **Local folders
+   and language**, select the participant pack containing the
+   `Ausschreibung <number>` folders, historical evidence, and
+   `Angebotstemplate.pptx`. Click **Save local settings**.
+2. Clear **Select all tenders and phases**, select a project and phase, then
+   click **Prepare proposals**. Choose a project with a scanned PDF to test OCR.
+3. Review **Tender requirements**, **Evidence**, and **Proposal**. Resolve the
+   blockers shown in **Final review** and regenerate from saved slides if needed.
+4. In **Final review**, check the notification status and use **Load deck
+   preview** if those integrations are configured. Enter the reviewer name,
+   click **Approve current checksum**, then **Verify approved download** and
+   **Download approved PowerPoint**.
 
 ## Purpose
 

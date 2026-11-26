@@ -36,7 +36,7 @@ class ModelCalls:
 
     def reserve(self, tokens):
         if tokens > self.tpm:
-            raise ValueError('One prompt exceeds the configured input token budget.')
+            raise ProviderError('One prompt exceeds the configured input token budget.', truncated=True)
         while True:
             now = time.time()
             with self.store.write() as db:
@@ -69,7 +69,7 @@ class ModelCalls:
                                                schema_name=shape.__name__, max_tokens=max_tokens)
                 return shape.model_validate_json(raw).model_dump()
             except ValidationError:
-                error = ProviderError('The provider response did not match the required schema.', transient=True)
+                error = ProviderError('The provider response did not match the required schema.', transient=True, invalid_content=True)
             except ProviderError as exc:
                 error = exc
             except ModelUnavailable as exc:
@@ -86,3 +86,10 @@ class ModelCalls:
                 raise error from None
             self.wait('Retrying transient model failure')
             self.sleep(min(12, 2 ** attempt + random.random()))
+
+
+def recoverable_content(error):
+    """A bad payload can be isolated. Access and quota failures apply to the job."""
+    return isinstance(error, ValueError) or (
+        isinstance(error, ProviderError) and (error.truncated or error.invalid_content)
+    )

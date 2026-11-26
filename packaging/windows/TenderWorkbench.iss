@@ -14,7 +14,7 @@ SolidCompression=yes
 Source: "..\..\mesakumo\*.py"; DestDir: "{app}\mesakumo"; Flags: recursesubdirs ignoreversion
 Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\Mesakumo_Document_Inventory.csv"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\TECHNICAL.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "README.md"; DestDir: "{app}"; DestName: "README-Windows.md"; Flags: ignoreversion
 Source: "Launch-TenderWorkbench.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

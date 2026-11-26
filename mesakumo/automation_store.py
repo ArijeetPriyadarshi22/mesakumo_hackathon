@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from .discovery import identity, packs
+from .discovery import PHASE_FILE, identity, offer_archives, packs
 from .persistence import ConflictError, ProjectStore
 
 
@@ -31,8 +31,12 @@ def workspace_path():
 
 
 def discover(root):
-    for folder in packs(root):
-        has_offer = any(path.is_file() and not path.is_symlink() for path in folder.rglob('*.[zZ][iI][pP]'))
+    if not root.is_dir():
+        return
+    declared = [folder for folder in root.iterdir() if folder.is_dir() and not folder.is_symlink()
+                and not folder.name.startswith('.') and (folder / PHASE_FILE).is_file()]
+    for folder in sorted(set(packs(root)) | set(declared)):
+        has_offer = bool(offer_archives(folder))
         for phase in ('participation', 'offer') if has_offer else ('single',):
             key = 'project-' + identity(canonical([str(root.resolve()), folder.name, phase]))
             yield key, folder, phase
@@ -231,7 +235,7 @@ class AutomationStore(ProjectStore):
                     INSERT INTO review_outbox(project,episode,payload,state,due)
                     VALUES (?, ?, ?, 'queued', ?)
                     ON CONFLICT(project,episode) DO UPDATE SET payload=excluded.payload
-                    WHERE review_outbox.state='queued' AND review_outbox.attempts=0
+                    WHERE review_outbox.state IN ('queued', 'retry')
                 """, (key, notice['episode'], canonical(notice), time.time()))
         return revision
 

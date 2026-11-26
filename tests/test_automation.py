@@ -121,10 +121,9 @@ class WorkflowTests(unittest.TestCase):
             self.store.progress(claim[0], claim[2], 'expired')
 
     def test_checkpoint_reuse_final_approval_edit_and_outbox(self):
-        template = template_path()
-        if template is None:
-            self.skipTest('Inspected participant template is unavailable.')
-        (self.root / template.name).write_bytes(template.read_bytes())
+        from synthetic_template import template_bytes
+
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
         evidence_file = self.root / 'experience.txt'
         evidence_file.write_text('Two workshop delivery references', encoding='utf-8')
         inventory = {'experience.txt': EvidenceSource('experience.txt', 'experience.txt', 'Previous project sources')}
@@ -183,10 +182,9 @@ class WorkflowTests(unittest.TestCase):
                 approve_current(restarted, second, 'Alex')
 
     def test_render_failure_keeps_proposal_units_and_retries_without_model(self):
-        template = template_path()
-        if template is None:
-            self.skipTest('Inspected participant template is unavailable.')
-        (self.root / template.name).write_bytes(template.read_bytes())
+        from synthetic_template import template_bytes
+
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
         environment = patch.dict(os.environ, {'MESAKUMO_RPM': '100'})
         with environment, patch('mesakumo.automation.evidence_inventory', return_value={}):
             with patch('mesakumo.automation.deck.render', side_effect=ValueError('Fixture render failure.')):
@@ -223,10 +221,9 @@ class WorkflowTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
         from mesakumo.ui.automation import service
 
-        template = template_path()
-        if template is None:
-            self.skipTest('Inspected participant template is unavailable.')
-        (self.root / template.name).write_bytes(template.read_bytes())
+        from synthetic_template import template_bytes
+
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
         (self.root / 'experience.txt').write_text('Two workshop delivery references', encoding='utf-8')
         inventory = {'experience.txt': EvidenceSource('experience.txt', 'experience.txt', 'Previous project sources')}
         self.store.set_setting('input_root', str(self.root))
@@ -280,7 +277,14 @@ class WorkflowTests(unittest.TestCase):
             current = self.store.project(self.key)
             self.assertNotEqual(original['checksum'], current['checksum'])
             self.assertEqual(current['approval']['checksum'], current['checksum'])
+            button(review, 'Verify approved download').click().run()
             self.assertIn('Download approved PowerPoint', [b.label for b in review.get('download_button')])
+            from mesakumo.automation import approved_download
+            self.assertEqual(approved_download(self.store, current), current['deck'])
+            (self.pack / 'scope.txt').write_text('Changed tender.', encoding='utf-8')
+            button(review, 'Verify approved download').click().run()
+            self.assertTrue(any('changed since approval' in message.value for message in review.warning))
+            self.assertNotIn('Download approved PowerPoint', [b.label for b in review.get('download_button')])
 
     def test_outbox_retries_only_definite_rejection(self):
         payload = dict(episode='episode', project='Fixture', reviewer='Morgan', triage=False,
@@ -457,9 +461,10 @@ class ValidationTests(unittest.TestCase):
                 calls('Synthetic prompt only', Reclassification)
             self.assertTrue(raised.exception.truncated)
             with store.connect() as db:
-                results = db.execute('SELECT input,output,thinking FROM model_calls ORDER BY id').fetchall()
+                results = db.execute('SELECT input,output,thinking,estimated FROM model_calls ORDER BY id').fetchall()
             self.assertEqual(len(results), 5)
-            self.assertEqual(tuple(results[2]), (30, 20, 7))
+            self.assertEqual(tuple(results[2])[:3], (30, 20, 7))
+            self.assertGreater(results[2]['estimated'], results[2]['input'])
 
     def test_template_slide_relationships_and_sample_removal(self):
         path = template_path()

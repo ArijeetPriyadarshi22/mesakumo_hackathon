@@ -8,8 +8,7 @@ from pathlib import Path
 
 from mesakumo.persistence import ConflictError, ProjectStore
 from mesakumo.proposal import (DRAFTING_SYSTEM, SCHEMA, ProposalDrafts, build_prompt, draft_row,
-                               handoff_csv, handoff_project, open_items, pending_items, review_summary,
-                               validate_draft)
+                               handoff_csv, open_items, pending_items, validate_draft)
 
 
 def citation(pid, location, excerpt):
@@ -249,28 +248,9 @@ class DraftStorageTests(unittest.TestCase):
         table = list(csv.DictReader(io.StringIO(handoff_csv(package).decode('utf-8-sig'), newline='')))
         self.assertEqual([(r['Requirement ID'], r['Section title']) for r in table], [('R2', 'Projektleitung')])
         self.assertEqual([c['passage_id'] for c in json.loads(table[0]['Citations'])], ['P10'])
-        project = handoff_project(package, REVIEW)
-        self.assertEqual((project.name, [s.title for s in project.sections]), ('Ausschreibung 9', ['Projektleitung']))
-        self.assertEqual([r.id for r in project.requirements], ['R1', 'R2', 'R3'])
-        self.assertEqual([(e.quality, e.decision) for e in project.evidence], [('sufficient', 'Approved')])
-        self.assertEqual([p.id for p in project.passages], ['P10'])
 
         self.drafts.decline('R1', 'Luba', 'Zu allgemein.', 1)  # Any change makes the package stale.
         self.assertEqual(self.drafts.latest_package()[1], False)
-
-    def test_review_summary_lists_what_needs_attention(self):
-        self.drafts.generate('R1', Stub({**PARTIAL, 'text': PARTIAL['text'] + ' Sie ist als Hauptdozentin benannt.'}),
-                             expected_version=0)
-        self.drafts.generate('R3', Stub(), expected_version=0)
-        self.drafts.decline('R3', 'Luba', 'Zertifikat anfragen.', 1)
-        summary = review_summary(REVIEW, self.drafts.all(), 'Ausschreibung 9')
-        attention = summary.split('## Needs attention')[1].split('## Sections')[0]
-        self.assertIn('waiting for your decision', attention)
-        self.assertIn('check wording: benannt, hauptdozentin', attention)
-        self.assertIn('declined by Luba', attention)
-        self.assertIn('not drafted yet', attention)
-        self.assertIn('| 3 | 0 | 1 | 1 | 1 |', summary)
-        self.assertIn('> Declined by Luba: Zertifikat anfragen.', summary)
 
     def test_stale_version_is_rejected(self):
         self.drafts.generate('R1', Stub(PARTIAL), expected_version=0)

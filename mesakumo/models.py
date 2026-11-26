@@ -1,13 +1,9 @@
 """Requesty EU adapter using the OpenAI SDK, as in the Team 1 guide."""
 import os
-from typing import Protocol
 from openai import OpenAI, DefaultHttpxClient, APIStatusError, APIConnectionError, APIError
 
 class ModelUnavailable(RuntimeError):
     pass
-
-class LanguageModel(Protocol):
-    def complete(self, prompt: str) -> str: ...
 
 class DisabledModel:
     def complete(self, prompt: str) -> str:

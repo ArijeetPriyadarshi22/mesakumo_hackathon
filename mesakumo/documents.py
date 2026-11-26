@@ -1,15 +1,7 @@
-"""Future format-specific extraction boundary."""
+"""Read local tender documents and store uploaded source files."""
 from pathlib import Path
 import posixpath
-from typing import Protocol
 from .domain import SourcePassage
-
-class DocumentProcessor(Protocol):
-    def extract(self, path: Path, document_id: str) -> list[SourcePassage]: ...
-
-class UnconfiguredProcessor:
-    def extract(self, path: Path, document_id: str) -> list[SourcePassage]:
-        raise NotImplementedError('Document processing is not implemented. No file was analysed.')
 
 import hashlib
 import zipfile

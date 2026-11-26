@@ -6,11 +6,11 @@ import streamlit as st
 from pydantic import ValidationError
 from streamlit import config
 
-from ..automation import approve_current, prepare_inputs, start_worker
-from ..automation_deck import open_local_deck, preview_pdf
-from ..automation_evidence import Proof, corpus, eligible, manifest
+from ..automation import approve_current, approved_download, start_worker
+from ..automation_deck import COVER_LIMITS, open_local_deck, preview_pdf
+from ..automation_evidence import Proof, applicable_review, corpus, effective_assessments, eligible, manifest, review_basis
 from ..automation_mail import statuses
-from ..automation_proposal import blockers
+from ..automation_proposal import blockers, confirm_fields
 from ..automation_requirements import CHAPTERS, Criterion, parse_grounded
 from ..automation_store import AutomationStore, fingerprint, workspace_path
 from ..discovery import participant_directory
@@ -78,9 +78,13 @@ def projects_view(store):
                     st.rerun()
     if not root:
         return
-    identifiers = store.register(Path(root))
+    try:
+        identifiers = store.register(Path(root))
+    except ValueError as error:
+        st.error(str(error))
+        return
     if not identifiers:
-        st.info('The selected folder has no Ausschreibung folders.')
+        st.info('No tender folders found. Use an Ausschreibung folder or declare phases in .tender-phases.json.')
     listing = jobs_table(store, identifiers)
     if listing:
         choices = {row['id']: f"{Path(row['folder']).name} · {row['phase']}" for row in listing}
@@ -138,6 +142,16 @@ def status_view(store, key, original_status):
         st.warning(row['diagnostic'])
 
 
+def remember_review(key, revision, checksum):
+    st.session_state['submitted_review'] = (key, revision, checksum)
+
+
+def review_action(project):
+    # Streamlit calls this callback with arguments from the previously rendered page.
+    return dict(on_click=remember_review,
+                args=(project['id'], project['revision'], project['checksum']))
+
+
 def save_edit(store, project, snapshot, dirty):
     existing = snapshot.get('dirty')
     snapshot['dirty'] = 'upstream' if 'upstream' in (existing, dirty) else 'render'
@@ -181,8 +195,8 @@ def edit_criterion(store, project, snapshot, row, locked):
         links = st.multiselect('Tender citations', list(sources), default=get('citations', []),
                                format_func=lambda sid: f"{sources[sid]['file']} · {sources[sid]['location']} · {sid[-12:]}")
         resolution = st.text_input('Confirmation and reviewer note', value=get('resolution', '') or '')
-        save = st.form_submit_button('Save criterion', disabled=locked)
-        remove = st.form_submit_button('Remove criterion', disabled=locked or row is None)
+        save = st.form_submit_button('Save criterion', **review_action(project), disabled=locked)
+        remove = st.form_submit_button('Remove criterion', **review_action(project), disabled=locked or row is None)
     if save:
         try:
             item = Criterion(text=text.strip(), citations=links,
@@ -198,6 +212,11 @@ def edit_criterion(store, project, snapshot, row, locked):
             snapshot['criteria'] = [r for r in snapshot.get('criteria', []) if r['id'] != rid] + [item]
             save_edit(store, project, snapshot, 'upstream')
     if remove:
+        if row['obligation'] in ('mandatory', 'scored', 'uncertain') and not resolution.strip():
+            st.error('Record the reason in the reviewer note before removing this requirement.')
+            return
+        if resolution.strip():
+            snapshot.setdefault('criterion_removals', {})[key] = dict(text=row['text'], reason=resolution.strip())
         snapshot.setdefault('criterion_edits', {})[key] = None
         snapshot['criteria'] = [r for r in snapshot['criteria'] if r['id'] != key]
         save_edit(store, project, snapshot, 'upstream')
@@ -205,6 +224,13 @@ def edit_criterion(store, project, snapshot, row, locked):
 
 def requirements_view(store, project, snapshot, locked):
     st.header('Tender requirements')
+    if snapshot.get('language_issue'):
+        st.warning(snapshot['language_issue'])
+    if snapshot.get('internal_planning'):
+        with st.expander('Internal planning · verify assumptions before committing'):
+            for item in snapshot['internal_planning']:
+                st.caption(item['file'])
+                st.text(item['text'] or item['issue'])
     with st.expander('Tender brief', expanded=True):
         for label, item in snapshot.get('facts', {}).items():
             st.write(f"**{label.capitalize()}** · {item['value']}")
@@ -220,7 +246,7 @@ def requirements_view(store, project, snapshot, locked):
             st.warning(f"{gap['file']} · {gap['detail']}")
             with st.form('gap-' + signature):
                 note = st.text_input('Resolution and reviewer', value=gap.get('resolution') or '')
-                if st.form_submit_button('Record resolution', disabled=locked):
+                if st.form_submit_button('Record resolution', **review_action(project), disabled=locked):
                     if not note.strip():
                         st.error('Enter the resolution before saving.')
                     else:
@@ -232,7 +258,7 @@ def requirements_view(store, project, snapshot, locked):
     if snapshot.get('conflicts'):
         with st.form('review-conflicts'):
             note = st.text_area('Resolve listed conflicts with explanation and source references')
-            if st.form_submit_button('Record conflict review', disabled=locked):
+            if st.form_submit_button('Record conflict review', **review_action(project), disabled=locked):
                 if note.strip():
                     snapshot.setdefault('conflict_reviews', {})[fingerprint(snapshot['conflicts'])] = note.strip()
                     save_edit(store, project, snapshot, 'render')
@@ -264,17 +290,25 @@ def requirements_view(store, project, snapshot, locked):
         st.info('No criteria in this view.')
     with st.expander('Add a requirement'):
         edit_criterion(store, project, snapshot, None, locked)
+    if snapshot.get('criterion_removals'):
+        with st.expander('Recorded criterion removals'):
+            st.dataframe(list(snapshot['criterion_removals'].values()), hide_index=True)
 
 
 def evidence_view(store, project, snapshot, locked):
     st.header('Evidence')
-    assessments = snapshot.get('evidence', {})
+    assessments = effective_assessments(snapshot)
     rows = [row for row in snapshot.get('criteria', []) if eligible(row)]
     choices = {row['id']: f"{row['chapter']} · {row['text']} · "
                f"{assessments.get(row['id'], {}).get('status', 'awaiting assessment')}" for row in rows}
     if choices:
         key = st.selectbox('Proof criterion', list(choices), format_func=choices.get)
         item = assessments.get(key, {})
+        criterion = next(row for row in rows if row['id'] == key)
+        manual = snapshot.get('evidence_edits', {}).get(key)
+        if manual and not applicable_review(manual, criterion, snapshot.get('evidence_sources', {})):
+            st.warning('The previous manual assessment needs reconfirmation for the current requirement or source.')
+            st.caption(manual['reason'])
         sources = snapshot.get('evidence_sources', {})
         st.write(item.get('reason', 'Prepare the project to assess this criterion.'))
         citations(item.get('citations', []), sources)
@@ -299,13 +333,16 @@ def evidence_view(store, project, snapshot, locked):
                                       default=[pid for pid in item.get('citations', []) if pid in sources],
                                       format_func=lambda pid: f"{sources[pid]['filename']} · {sources[pid]['location']}")
             reason = st.text_area('Reviewer reasoning', item.get('reason', ''), max_chars=450)
-            if st.form_submit_button('Save assessment', disabled=locked):
-                if not reason.strip() or bool(selected) != (status in ('confirmed', 'partial')):
+            if st.form_submit_button('Save assessment', **review_action(project), disabled=locked):
+                if len(selected) > 12:
+                    st.error('Choose up to 12 passages for one criterion. Split the criterion if more are needed.')
+                elif not reason.strip() or bool(selected) != (status in ('confirmed', 'partial')):
                     st.error('Provide a reason and citations for positive assessments.')
                 else:
                     row = Proof(criterion=key, status=status, citations=selected, reason=reason, rejected=[]).model_dump()
+                    row['basis'] = review_basis(criterion, selected, sources)
                     snapshot.setdefault('evidence_edits', {})[key] = row
-                    assessments[key] = row
+                    snapshot.setdefault('evidence', {})[key] = row
                     save_edit(store, project, snapshot, 'upstream')
     else:
         st.info('This checklist has no proposal proof criteria.')
@@ -322,7 +359,7 @@ def evidence_view(store, project, snapshot, locked):
                 citations(candidate['citations'], snapshot.get('evidence_sources', {}))
     with st.form('reviewer-override'):
         reviewer_name = st.text_input('Reviewer override', value=snapshot.get('reviewer_override') or '')
-        if st.form_submit_button('Save reviewer', disabled=locked):
+        if st.form_submit_button('Save reviewer', **review_action(project), disabled=locked):
             snapshot['reviewer_override'] = reviewer_name.strip()
             save_edit(store, project, snapshot, 'render')
     if snapshot.get('knowledge_gaps'):
@@ -332,6 +369,19 @@ def evidence_view(store, project, snapshot, locked):
 
 def proposal_view(store, project, snapshot, locked):
     st.header('Proposal')
+    with st.expander('Cover display text'):
+        with st.form('cover-display'):
+            cover = snapshot.get('cover', {})
+            facts = snapshot.get('facts', {})
+            values = {field: st.text_input(f'Cover {field}', cover.get(field) or facts.get(field, {}).get('value', ''),
+                                          help=f'Mapped width guideline is {limit} characters.')
+                      for field, limit in COVER_LIMITS.items()}
+            if st.form_submit_button('Save cover', **review_action(project), disabled=locked):
+                if any(len(value.strip()) > COVER_LIMITS[field] for field, value in values.items()):
+                    st.error('Use shorter display text. The cited original stays in Requirements.')
+                else:
+                    snapshot['cover'] = {field: value.strip() for field, value in values.items()}
+                    save_edit(store, project, snapshot, 'render')
     chapters = snapshot.get('chapters', [])
     if not chapters:
         st.info('Prepare proposals to build the editable slide plan.')
@@ -370,6 +420,7 @@ def proposal_view(store, project, snapshot, locked):
                             'team': 'Role | confirmed team member'}
             fields = []
             valid_fields = True
+            field_reviewer, field_basis = '', ''
             if field_label := field_labels.get(group['role']):
                 existing_fields = '\n'.join(' | '.join(row) for row in group.get('fields', []))
                 lines = st.text_area(field_label + ' · one per line', existing_fields)
@@ -377,17 +428,28 @@ def proposal_view(store, project, snapshot, locked):
                 limit = 2 if group['role'] == 'team' else 3
                 valid_fields = len(fields) <= limit and all(
                     len(row) == 2 and all(0 < len(value) <= 45 for value in row) for row in fields)
-            if st.form_submit_button('Save slide group', disabled=locked):
+                prior_review = group.get('field_review') or {}
+                field_reviewer = st.text_input('Commercial field reviewer', prior_review.get('reviewer', ''), max_chars=100)
+                field_basis = st.text_area('Supporting decision or source', prior_review.get('basis', ''), max_chars=500)
+            if st.form_submit_button('Save slide group', **review_action(project), disabled=locked):
                 if not valid_fields:
                     st.error('Use the displayed two-field format and keep each field within 45 characters.')
                     return
                 if new_title.strip() and all(claim['text'] for claim in claims):
-                    group.update(title=new_title.strip(), claims=claims, fields=fields)
+                    group = dict(group, title=new_title.strip(), claims=claims, fields=fields)
+                    group.pop('field_review', None)
+                    if fields:
+                        try:
+                            group['field_review'] = confirm_fields(group, field_reviewer, field_basis)
+                        except ValueError as error:
+                            st.error(str(error))
+                            return
+                    snapshot['chapters'] = [group if item['id'] == group_id else item for item in chapters]
                     snapshot.setdefault('chapter_edits', {})[group_id] = group
                     save_edit(store, project, snapshot, 'render')
                 else:
                     st.error('Enter a title and text for every slide field.')
-        if st.button('Refresh this slide group', disabled=locked):
+        if st.button('Refresh this slide group', **review_action(project), disabled=locked):
             snapshot.setdefault('chapter_edits', {}).pop(group_id, None)
             snapshot['refresh_group'] = {'id': group_id, 'version': uuid4().hex}
             save_edit(store, project, snapshot, 'upstream')
@@ -430,12 +492,12 @@ def final_view(store, project, snapshot, locked):
     if active_bytes:
         st.caption('SHA-256 · ' + project['checksum'])
         st.download_button('Download draft PowerPoint', active_bytes, file_name='Proposal-DRAFT.pptx', mime=PPTX_MIME)
-        if st.button('Open in PowerPoint'):
+        if st.button('Open in PowerPoint', **review_action(project)):
             try:
                 open_local_deck(store.path.parent, active_bytes)
             except (OSError, ValueError) as error:
                 st.warning(str(error))
-        if st.button('Load deck preview'):
+        if st.button('Load deck preview', **review_action(project)):
             data = pdf_preview(project['checksum'], _deck=active_bytes)
             if data:
                 st.pdf(data, height=600)
@@ -445,7 +507,7 @@ def final_view(store, project, snapshot, locked):
         if not blockers(snapshot) and not locked:
             with st.form('final-approval'):
                 reviewer = st.text_input('Approval reviewer', '' if name == 'Local triage' else name)
-                if st.form_submit_button('Approve current checksum', disabled=bool(project['approval'])):
+                if st.form_submit_button('Approve current checksum', **review_action(project), disabled=bool(project['approval'])):
                     try:
                         approve_current(store, project, reviewer)
                     except (OSError, ValueError) as error:
@@ -453,21 +515,20 @@ def final_view(store, project, snapshot, locked):
                     else:
                         st.rerun()
         if project['approval'] and not locked:
-            try:
-                current_key = prepare_inputs(project, snapshot, store).key
-                if current_key == project['input_key']:
-                    st.success('Approved by ' + project['approval']['reviewer'])
-                    st.download_button('Download approved PowerPoint', active_bytes, file_name='Proposal-APPROVED.pptx',
-                                       mime=PPTX_MIME)
+            st.caption('Saved approval by ' + project['approval']['reviewer'])
+            if st.button('Verify approved download', **review_action(project)):
+                try:
+                    verified = approved_download(store, project)
+                except (OSError, ValueError) as error:
+                    st.warning(str(error))
                 else:
-                    st.warning('Project files have changed since approval. Prepare a current deck.')
-            except (OSError, ValueError) as error:
-                st.warning(str(error))
+                    st.download_button('Download approved PowerPoint', verified, file_name='Proposal-APPROVED.pptx',
+                                       mime=PPTX_MIME, on_click='ignore')
     elif snapshot:
         st.info('Generate the PowerPoint after reviewing saved changes.')
     else:
         st.info('Prepare this project to generate the first review draft.')
-    if st.button('Regenerate from saved slides', disabled=locked or not snapshot.get('content_key')
+    if st.button('Regenerate from saved slides', **review_action(project), disabled=locked or not snapshot.get('content_key')
                  or snapshot.get('dirty') == 'upstream'):
         store.enqueue([key], 'render')
         st.rerun()
@@ -492,6 +553,12 @@ def run():
         if st.button('Back to projects'):
             location()
         return
+    submitted = st.session_state.pop('submitted_review', None)
+    if submitted is not None and submitted != (key, project['revision'], project['checksum']):
+        st.session_state['review_conflict'] = 'The project changed since you opened this view. Review the current revision and try again.'
+        st.rerun()
+    if message := st.session_state.pop('review_conflict', None):
+        st.error(message)
     snapshot = project['snapshot']
     tab = st.query_params.get('tab', 'review')
     if tab not in TABS:

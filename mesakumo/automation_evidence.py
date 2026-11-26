@@ -3,17 +3,18 @@ import hashlib
 import json
 import re
 from dataclasses import asdict
-from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 
+from .automation_model import recoverable_content
 from .automation_requirements import PARSER, Structured
 from .automation_store import canonical, fingerprint
 from .documents import MAX_FILE_BYTES
 from .domain import SourcePassage
-from .evidence import EvidenceReading, evidence_inventory, read_evidence, resolve_evidence_path
+from .evidence import EvidenceReading, read_evidence, resolve_evidence_path
 from .evidence_matching import LexicalIndex, current_action, terms
+from .gemini import ProviderError
 
 ASSESSMENT = 'proof-2'
 
@@ -69,11 +70,46 @@ def eligible(item):
             and not current_action(dict(text=item['text'], constraints=item['conditions'])))
 
 
+def review_basis(criterion, citation_ids, sources):
+    return dict(
+        requirement=fingerprint([criterion['id'], ' '.join(criterion['text'].split()),
+                                 sorted(' '.join(item.split()) for item in criterion['conditions']),
+                                 criterion['scope'], criterion['obligation'], criterion['response'],
+                                 sorted(criterion['citations'])]),
+        sources={pid: sources[pid]['document_version'] for pid in citation_ids if pid in sources},
+    )
+
+
+def applicable_review(review, criterion, sources):
+    return bool(review.get('basis') and all(pid in sources for pid in review['citations'])
+                and review['basis'] == review_basis(criterion, review['citations'], sources))
+
+
+def effective_assessments(snapshot):
+    assessments = dict(snapshot.get('evidence', {}))
+    for row in snapshot.get('criteria', []):
+        rid = row['id']
+        manual = snapshot.get('evidence_edits', {}).get(rid)
+        if manual and assessments.get(rid) == manual and not applicable_review(
+            manual, row, snapshot.get('evidence_sources', {})
+        ):
+            assessments.pop(rid, None)
+    return assessments
+
+
+def proof_span(row, text, limit=1600):
+    if len(text) <= limit:
+        return text
+    query = set(terms(' '.join([row['text'], *row['conditions']])))
+    starts = [0, *range(limit // 2, len(text) - limit, limit // 2), len(text) - limit]
+    return max((text[start:start + limit] for start in starts), key=lambda span: len(query & set(terms(span))))
+
+
 def shortlist(index, item):
     ids = index.search(' '.join([item['text'], *item['conditions']]), limit=5)
     citations = {pid: index.citation(pid) for pid in ids}
-    for item in citations.values():
-        item['excerpt'] = item['excerpt'][:1600]
+    for citation in citations.values():
+        citation['excerpt'] = proof_span(item, citation['excerpt'])
     return citations
 
 
@@ -101,7 +137,7 @@ Use search incomplete for insufficient search. Cite only candidate IDs for that 
     return {row['criterion']: row for row in assessed}
 
 
-def match(store, key, token, call, model_key, criteria, readings, reviews, progress):
+def match(store, key, token, call, model_key, criteria, readings, reviews, progress, *, gaps=None):
     index = LexicalIndex(readings)
     all_read = all(reading.status == 'Read' for reading in readings)
     result, pending, reviewed, candidates_by_id, valid_manual = {}, [], set(), {}, set()
@@ -114,7 +150,8 @@ def match(store, key, token, call, model_key, criteria, readings, reviews, progr
         reviewed.update(candidates)
         cache_key = fingerprint([ASSESSMENT, model_key, row, candidates])
         manual = reviews.get(rid)
-        if manual and all(p in index.entries for p in manual['citations']):
+        manual_sources = {pid: index.citation(pid) for pid in manual['citations'] if pid in index.entries} if manual else {}
+        if manual and applicable_review(manual, row, manual_sources):
             result[rid] = manual
             valid_manual.add(rid)
         elif cached := store.cached(key, 'proof', cache_key):
@@ -124,16 +161,37 @@ def match(store, key, token, call, model_key, criteria, readings, reviews, progr
                                reason='Lexical search returned no candidate. Review the local evidence corpus.')
         else:
             pending.append((row, candidates, cache_key))
-    for offset in range(0, len(pending), 4):
-        progress('Evidence', len(result), total)
-        batch = pending[offset:offset + 4]
-        judgments = assess(call, [(row, candidates) for row, candidates, _ in batch])
+    def assess_batch(batch):
+        try:
+            judgments = assess(call, [(row, candidates) for row, candidates, _ in batch])
+        except (ProviderError, ValueError) as error:
+            if not recoverable_content(error):
+                raise
+            if len(batch) > 1:
+                split = len(batch) // 2
+                assess_batch(batch[:split])
+                assess_batch(batch[split:])
+            else:
+                rid = batch[0][0]['id']
+                if gaps is not None:
+                    gaps.append(dict(file='Evidence ' + rid, detail=str(error)))
+                result[rid] = dict(criterion=rid, status='search incomplete', citations=[], rejected=[],
+                                   reason='Assessment did not validate. Resume preparation or review the proof.')
+            return
         for row, _, cache_key in batch:
             rid = row['id']
-            judgment = judgments[rid]
+            judgment = dict(judgments[rid], origin='automatic')
             store.save_unit(key, 'proof', cache_key, judgment, token)
             result[rid] = judgment
+
+    for offset in range(0, len(pending), 4):
+        progress('Evidence', len(result), total)
+        assess_batch(pending[offset:offset + 4])
     for rid, judgment in result.items():
+        if judgment['citations'] and rid not in valid_manual:
+            result[rid] = judgment = dict(judgment, origin='automatic',
+                                          proof_excerpts={pid: candidates_by_id[rid][pid]['excerpt']
+                                                          for pid in judgment['citations']})
         if judgment['status'] == 'missing' and rid not in valid_manual:
             candidates = candidates_by_id[rid]
             if (not all_read or len(candidates) < len(index.entries)
@@ -150,8 +208,12 @@ def profile_data(path):
         data = path.read_bytes()
         profiles = json.loads(data)
         if not isinstance(profiles, list) or any(
-            not isinstance(p, dict) or set(p) != {'name', 'role', 'profile_path', 'location'}
-            or any(not isinstance(v, str) or not v.strip() for v in p.values()) for p in profiles
+            not isinstance(p, dict) or not {'name', 'role', 'profile_path', 'location'} <= p.keys()
+            or set(p) - {'name', 'role', 'profile_path', 'location', 'locations'}
+            or any(not isinstance(p[key], str) or not p[key].strip() for key in ('name', 'role', 'profile_path', 'location'))
+            or ('locations' in p and (not isinstance(p['locations'], list)
+                                      or any(not isinstance(v, str) or not v.strip() for v in p['locations'])))
+            for p in profiles
         ):
             raise ValueError
         return profiles, hashlib.sha256(data).hexdigest()
@@ -159,37 +221,65 @@ def profile_data(path):
         raise ValueError('Reviewer profiles must be a JSON list with name, role, profile_path and location.') from None
 
 
+COMBINED_PROFILES = 'Input Angebote_Referenzen und Beraterprofile.pptx'
+
+
+def profile_source(relative_path, role):
+    return role == 'Team information' or relative_path == COMBINED_PROFILES
+
+
 def detected_profiles(readings):
-    """Recognize the named instructor forms and CVs in the eligible inventory."""
+    """Recognize explicitly identified individual records and the supplied profile slide layout."""
     result = []
     for reading in readings:
-        if reading.source.role != 'Team information' or not reading.passages:
+        source = reading.source
+        if not profile_source(source.relative_path, source.role) or not reading.passages:
+            continue
+        if source.relative_path == COMBINED_PROFILES:
+            for passage in reading.passages:
+                if not re.fullmatch(r'Slide (?:[3-9]|1[0-2])', passage.location):
+                    continue
+                lines = [line.strip() for line in passage.excerpt.splitlines() if line.strip()]
+                if not any('Einsatzbereiche und Kompetenzen' in line for line in lines):
+                    continue
+                for name, role in zip(lines[:4], lines[1:5]):
+                    if (re.fullmatch(r"(?:Dr\. )?[^\W\d_]+(?:[- '][^\W\d_]+){1,5}", name)
+                            and re.search(r'partner|manager|consultant', role, re.I)):
+                        result.append(dict(name=name, role=role, profile_path=source.relative_path,
+                                           location=passage.location))
+                        break
             continue
         first = reading.passages[0]
-        filename = reading.source.filename.casefold()
-        name = ''
-        role = ''
+        filename = source.filename.casefold()
+        name, role = '', ''
         if 'dozentenblatt' in filename:
             match = re.search(r'Persönliche Angaben[^\S\n]*\n([^,\n]+),\s*([^,\n]+)', first.excerpt)
             if match:
                 name = f'{match[2].strip()} {match[1].strip()}'
                 role = 'Dozentin' if 'dozentin' in filename else 'Dozent'
-        elif 'lebenslauf' in filename:
+        elif 'lebenslauf' in filename and first.excerpt.strip():
             line = first.excerpt.strip().splitlines()[0]
             if re.fullmatch(r'(?:Dr\. )?[^\W\d_]+(?:[- ][^\W\d_]+){1,4}', line):
                 name, role = line, 'Beratung'
         if name:
-            result.append(dict(name=name, role=role, profile_path=reading.source.relative_path, location=first.location))
+            result.append(dict(name=name, role=role, profile_path=source.relative_path, location=first.location,
+                               locations=[passage.location for passage in reading.passages]))
     return result
 
 
 def suggest_reviewer(profiles, criteria, index):
     core = [row for row in criteria if row['scope'] == 'proposal'
             and row['obligation'] in ('mandatory', 'scored') and row['response'] in ('method', 'proof')]
-    ranked = []
+    ranked = {}
     for profile in profiles:
-        candidates = [index.citation(pid) for pid, (source, _) in index.entries.items()
-                      if source.role == 'Team information' and source.relative_path == profile['profile_path']]
+        path = profile['profile_path']
+        locations = {profile['location'], *profile.get('locations', [])}
+        other_locations = {location for other in profiles if other['profile_path'] == path
+                           and other['name'].casefold() != profile['name'].casefold()
+                           for location in (other['location'], *other.get('locations', []))}
+        candidates = [index.citation(pid) for pid, (source, passage) in index.entries.items()
+                      if source.relative_path == path and profile_source(path, source.role)
+                      and passage.location in locations - other_locations]
         passages = [(item, set(terms(item['excerpt']))) for item in candidates]
         identity = next((item for item, tokens in passages if item['location'] == profile['location']
                          and set(terms(profile['name'])) <= tokens), None)
@@ -207,10 +297,13 @@ def suggest_reviewer(profiles, criteria, index):
                 fit.append(dict(criterion=row['id'], terms=sorted(overlap), role=bool(overlap & role_terms),
                                 source=best['passage_id']))
         if fit:
-            ranked.append(dict(name=profile['name'], role=profile['role'], reasons=fit,
-                               score=len(fit) * 2 + sum(reason['role'] for reason in fit),
-                               citations=list(dict.fromkeys([identity['passage_id'], *(r['source'] for r in fit)]))))
-    ranked.sort(key=lambda p: (-p['score'], p['name']))
+            item = dict(name=profile['name'], role=profile['role'], reasons=fit,
+                        score=len(fit) * 2 + sum(reason['role'] for reason in fit),
+                        citations=list(dict.fromkeys([identity['passage_id'], *(r['source'] for r in fit)])))
+            name_key = profile['name'].casefold()
+            if name_key not in ranked or item['score'] > ranked[name_key]['score']:
+                ranked[name_key] = item
+    ranked = sorted(ranked.values(), key=lambda p: (-p['score'], p['name']))
     tied = len(ranked) > 1 and ranked[0]['score'] == ranked[1]['score']
     match = ranked[0] if ranked and not tied else None
     return dict(match=match, candidates=ranked, tied=tied)

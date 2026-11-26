@@ -12,7 +12,7 @@ from . import automation_evidence as evidence
 from . import automation_proposal as proposal
 from . import automation_requirements as requirements
 from .automation_mail import dispatch, notice_for
-from .automation_model import ModelCalls, model_profile
+from .automation_model import ModelCalls, model_profile, recoverable_content
 from .automation_store import fingerprint
 from .evidence import evidence_inventory
 from .final_export import read_template
@@ -21,7 +21,7 @@ from .models import DisabledModel, ModelUnavailable, configured_model
 from .persistence import ConflictError
 
 LOG = logging.getLogger(__name__)
-WORKFLOW = 'automation-4'
+WORKFLOW = 'automation-5'
 
 
 def get_template(root):
@@ -49,12 +49,12 @@ class Inputs:
     key: str
 
 
-def prepare_inputs(project, snapshot, store):
+def prepare_inputs(project, snapshot, store, *, capture=False):
     folder = Path(project['folder'])
     if not folder.is_dir():
         raise ValueError('The tender folder is unavailable. Restore the folder and retry.')
     root = folder.parent
-    rows, manifest = requirements.read_manifest(folder, project['phase'])
+    rows, manifest = requirements.read_manifest(folder, project['phase'], capture=capture)
     inventory = evidence_inventory()
     knowledge = evidence.manifest(root, inventory)
     profile_path = store.path.parent / 'reviewer_profiles.json'
@@ -104,17 +104,22 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
 
     progress('Checking inputs')
     inputs = prepare_inputs(project, snapshot, store)
-    retry_extraction = action == 'reuse' and bool(snapshot.get('extraction_gaps'))
+    retry_content = action == 'reuse' and bool(snapshot.get('extraction_gaps') or snapshot.get('generation_gaps'))
     if (action == 'reuse' and inputs.key == project['input_key'] and project['deck']
-            and not snapshot.get('dirty') and not retry_extraction):
+            and not snapshot.get('dirty') and not retry_content):
         return
     same_content = snapshot.get('content_key') == inputs.content_key and snapshot.get('dirty') != 'upstream'
     if action == 'render' and not same_content:
         raise ValueError('Preparation inputs changed. Prepare proposals to validate the current content first.')
     snapshot.update(project_name=folder.name, phase=phase)
     language = inputs.language
-    active = action == 'update' or not same_content or retry_extraction
+    active = action == 'update' or not same_content or retry_content
     if active:
+        captured = prepare_inputs(project, snapshot, store, capture=True)
+        if captured.key != inputs.key:
+            raise ConflictError('Sources changed during preparation. Retry with the current material.')
+        inputs = captured
+        generation_gaps = []
         model = model_factory()
         profile = model_profile(model)
         model_key = snapshot.get('model_profile', profile) if action == 'reuse' else profile
@@ -140,13 +145,21 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
         def extract(batch):
             def request():
                 try:
-                    return requirements.extract_batch(call, batch, phase, language_label('en' if language == 'en' else 'de'))
-                except ProviderError as error:
-                    if not error.truncated or len(batch) < 2:
+                    return requirements.extract_batch(call, batch, phase, language_label(language) if language != 'auto' else 'the language of the cited source')
+                except (ProviderError, ValueError) as error:
+                    if not recoverable_content(error) or len(batch) < 2:
                         raise
                     return {'split': True}
 
-            result = unit('extraction', [requirements.EXTRACTION, model_key, phase, language, batch], request)
+            try:
+                result = unit('extraction', [requirements.EXTRACTION, model_key, phase,
+                                             'auto-source-language-1' if language == 'auto' else language, batch], request)
+            except (ProviderError, ValueError) as error:
+                if isinstance(error, ConflictError) or not recoverable_content(error):
+                    raise
+                source = next(iter(batch.values()))
+                extraction_gaps.append(dict(file=source['file'], detail=f"{source['location']}: {error}"))
+                return {'criteria': [], 'facts': []}
             if not result.get('split'):
                 return result
             entries = list(batch.items())
@@ -158,13 +171,22 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             def request():
                 try:
                     return proposal.draft_chapter(call, role, label, draft_inputs, source_inputs)
-                except ProviderError as error:
-                    if not error.truncated or len(draft_inputs) < 2:
+                except (ProviderError, ValueError) as error:
+                    if not recoverable_content(error) or len(draft_inputs) < 2:
                         raise
                     return {'split': True}
 
-            saved = unit('chapter', [proposal.PLAN_VERSION, model_key, role, label, draft_inputs, source_inputs,
-                                     version], request)
+            try:
+                saved = unit('chapter', [proposal.PLAN_VERSION, model_key, role, label, draft_inputs, source_inputs,
+                                         version], request)
+            except (ProviderError, ValueError) as error:
+                if isinstance(error, ConflictError) or not recoverable_content(error):
+                    raise
+                generation_gaps.append(dict(file='Chapter ' + role, detail=str(error)))
+                i = requirements.CHAPTERS.index(role)
+                wording = 'Provide a validated response.' if label == 'English' else 'Geprüfte Antwort ergänzen.'
+                return dict(title=proposal.TITLES['en' if label == 'English' else 'de'][i],
+                            claims=[dict(text=wording, kind='open', requirements=list(draft_inputs), sources=[])])
             if not saved.get('split'):
                 return saved
             items = list(draft_inputs.items())
@@ -189,11 +211,7 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             extracted, extraction_gaps = [], []
             for index, batch in enumerate(chunks):
                 progress('Extracting criteria', index, len(chunks))
-                try:
-                    extracted.append(extract(batch))
-                except ValueError as error:
-                    source = next(iter(batch.values()))
-                    extraction_gaps.append(dict(file=source['file'], detail=str(error)))
+                extracted.append(extract(batch))
             snapshot['extraction_gaps'] = extraction_gaps
             criteria, facts, conflicts = requirements.consolidate(extracted, sources)
             progress('Checking uncertain criteria')
@@ -203,11 +221,12 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             criteria, edit_conflicts = apply_edits(rechecked, snapshot.get('criterion_edits', {}), sources)
             for item in gaps:
                 item['resolution'] = snapshot.get('gap_resolutions', {}).get(fingerprint(item))
-            if language == 'auto':
-                tender_language = facts.get('language', {}).get('value', '').casefold()
-                language = 'en' if any(word in tender_language for word in ('en', 'english', 'englisch')) and (
-                    tender_language == 'en' or 'english' in tender_language or 'englisch' in tender_language) else 'de'
-            snapshot.update(criteria=criteria, facts=facts, conflicts=conflicts + edit_conflicts, language=language)
+            language, language_issue = requirements.output_language(language, facts, sources)
+            internal = requirements.planning_context(inputs.rows)
+            snapshot.update(criteria=criteria, facts=facts, conflicts=conflicts + edit_conflicts, language=language,
+                            language_issue=language_issue, internal_planning=internal)
+            if internal:
+                snapshot['conflicts'].append('Review internal planning assumptions and confirm any proposed partner commitments.')
             if not criteria:
                 snapshot['conflicts'].append('No criteria were extracted. Review the tender before approval.')
 
@@ -216,7 +235,7 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             snapshot['knowledge_gaps'] = [dict(file=r.source.relative_path, detail=r.detail)
                                           for r in readings if r.status != 'Read']
             assessments, citations, index = evidence.match(
-                store, key, token, call, model_key, criteria, readings, snapshot.get('evidence_edits', {}), progress)
+                store, key, token, call, model_key, criteria, readings, snapshot.get('evidence_edits', {}), progress, gaps=generation_gaps)
             profiles = inputs.profiles or evidence.detected_profiles(readings)
             reviewer = evidence.suggest_reviewer(profiles, criteria, index)
             for candidate in reviewer['candidates']:
@@ -246,6 +265,7 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             if generated:
                 snapshot['conflicts'].append('Saved slide edits need reassignment after the chapter structure changed.')
             snapshot['chapters'] = groups
+            snapshot['generation_gaps'] = generation_gaps
             snapshot.pop('refresh_group', None)
             snapshot['content_key'] = inputs.content_key
         except (ModelUnavailable, ValueError, OSError) as error:
@@ -296,9 +316,10 @@ def run_once(store, model_factory=configured_model, *, port=8501):
     thread.start()
     try:
         prepare(store, key, action, token, model_factory, port=port)
-        gaps = store.project(key)['snapshot'].get('extraction_gaps', [])
+        prepared = store.project(key)['snapshot']
+        gaps = prepared.get('extraction_gaps') or prepared.get('generation_gaps')
         store.finish(key, token, 'partial' if gaps else 'ready',
-                     'Some extraction batches need a retry.' if gaps else None)
+                     'Some preparation units need a retry.' if gaps else None)
     except (ModelUnavailable, ValueError, OSError) as error:
         try:
             store.finish(key, token, 'failed', str(error))
@@ -341,3 +362,21 @@ def approve_current(store, project, reviewer):
         raise ConflictError('Inputs changed since this deck was generated. Prepare a new draft.')
     return store.approve(project['id'], project['revision'], project['checksum'], reviewer,
                          template_hash=inputs.template_hash, blockers=proposal.blockers)
+
+
+def approved_download(store, project):
+    """Verify freshness at the action that issues the exact approved bytes."""
+    if not project.get('approval') or not project.get('deck'):
+        raise ConflictError('Approve the current deck before downloading it.')
+    if proposal.blockers(project['snapshot']):
+        raise ConflictError('Resolve final blockers before downloading the approved deck.')
+    inputs = prepare_inputs(project, project['snapshot'], store)
+    if inputs.key != project['input_key']:
+        raise ConflictError('Project files have changed since approval. Prepare a current deck.')
+    current = store.project(project['id'])
+    checksum = project['checksum']
+    if (current['revision'] != project['revision'] or current['checksum'] != checksum
+            or (current['approval'] or {}).get('checksum') != checksum
+            or hashlib.sha256(current['deck'] or b'').hexdigest() != checksum):
+        raise ConflictError('The approved deck changed while it was being checked.')
+    return current['deck']

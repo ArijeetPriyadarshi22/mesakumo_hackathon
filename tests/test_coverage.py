@@ -5,7 +5,7 @@ from pathlib import Path
 from mesakumo.discovery import open_selection
 from mesakumo.persistence import ProjectStore
 from mesakumo.agent import sources
-from mesakumo.coverage import CoverageRuns, referenced_candidates, source_groups
+from mesakumo.coverage import CoverageRuns
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):

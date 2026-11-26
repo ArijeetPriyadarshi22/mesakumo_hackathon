@@ -531,3 +531,5 @@ restart-safe preparation, structured extraction and evidence, an editable slide 
 checksum approval, and a reviewer outbox. The baseline, each phase's output and file
 map, tests, offline timings, acceptance gaps, and manual release check are in
 [REDESIGN_IMPLEMENTATION.md](REDESIGN_IMPLEMENTATION.md).
+
+Follow-up fixes and verification for findings R01–R15 are in the [review execution ledger](docs/reviews/automated-tender-workflow.md).

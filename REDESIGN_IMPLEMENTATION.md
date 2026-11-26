@@ -9,11 +9,11 @@ The new default entry point is `python -m mesakumo`. It opens the persistent Pro
 1. Install the pinned requirements with `python -m pip install -r requirements.txt`.
 2. Set the approved provider in your shell. For Gemini, export `MESAKUMO_LLM_PROVIDER=gemini`, `MESAKUMO_LLM_APPROVED=yes`, `GEMINI_API_KEY`, and the model ID enabled for your project in `MESAKUMO_LLM_MODEL`. The fallback Gemini model ID is `gemini-3.5-flash-lite`. Requesty retains its existing EU configuration. Provider calls send selected excerpts and metadata.
 3. Run `python -m mesakumo`. Open **Local folders and language**, choose the directory containing the `Ausschreibung` folders and `Angebotstemplate.pptx`, and save. Use **Prepare proposals** on one project or a selection. To work with a saved demo in the old UI, run `python -m mesakumo.resume_tender2`.
-4. Open the project when a draft is ready. Use the linked Requirements, Evidence and Proposal screens to resolve blockers. Use **Regenerate from saved slides** after wording-only edits, or **Prepare proposals** after changes to criteria or proof. Review the draft under **Final review**, approve its checksum, and download the approved PowerPoint.
+4. Open the project when a draft is ready. Use the linked Requirements, Evidence and Proposal screens to resolve blockers. Use **Regenerate from saved slides** after wording-only edits, or **Prepare proposals** after changes to criteria or proof. Review the draft under **Final review**, approve its checksum, and choose **Verify approved download** before downloading.
 
 The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG_DATA_HOME:-$HOME/.local/share}/TenderWorkbench` on POSIX systems. `MESAKUMO_AUTOMATION_DIR` overrides the default. The review URL uses `http://localhost:8501/?project=<id>&tab=review` and points to the same workspace when the local app runs again on the same port. Keep the app running to continue a job after closing the browser. `python -m mesakumo --worker` can run the worker independently. Set the same `--port` on both processes if you change it.
 
-[Technical handoff](TECHNICAL.md) · [Environment settings](.env.example) · [Redesign brief](Mesakumo_Redesign_and_Codex_Prompts.md)
+[Technical handoff](TECHNICAL.md) · [Environment settings](.env.example) · [Follow-up review and execution ledger](docs/reviews/automated-tender-workflow.md)
 
 ## Phase 0 · Baseline and fixtures
 
@@ -36,7 +36,7 @@ The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG
 
 ## Phase 1 · Project launcher and persistent jobs
 
-**Output.** Projects can be opened in a second browser session and after restarting the app. A project ID is derived from the resolved root, tender folder and phase. A ZIP indicates distinct participation and offer jobs. The same tender folder name in two roots produces independent projects. The launcher has an explicit route for the old Streamlit UI and for the old HTTP shell.
+**Output.** Projects can be opened in a second browser session and after restarting the app. A project ID is derived from the resolved root, tender folder and phase. An explicitly declared offer archive, `Offer.zip`, or the supplied Tender 3 offer archive indicates distinct participation and offer jobs. Ordinary supporting archives stay in their tender. The same tender folder name in two roots produces independent projects. The launcher has an explicit route for the old Streamlit UI and for the old HTTP shell.
 
 **Logic.** `automation_store.py` extends the existing SQLite store with settings, current projects, immutable revision snapshots, jobs, work units, model metrics and outbox tables. An immediate transaction serializes claims and duplicate enqueues. The worker checks the lease token before publishing a unit or revision and extends the lease while processing. Expired jobs can be reclaimed and completed units are reused on restart. The UI uses query parameters and status polling. Old saved workflows use the original database format via `legacy_streamlit.py` and `resume_tender2.py`. Opening a legacy workspace is the explicit compatibility path. Automated runs re-extract the current criteria before evidence matching.
 
@@ -50,7 +50,7 @@ The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG
 
 **Logic.** `gemini.py` uses the native `google-genai` structured response adapter. `automation_model.py` validates responses with Pydantic, reserves RPM and input TPM in SQLite, supports a configurable RPD ceiling, and records usage when the provider supplies it. Quotas are shared by jobs using the same workspace and provider-project/model bucket. Automatic RPM starts at 12, or 4 for a model ID containing `hydrogen`. The default input TPM is 200,000. The daily limit is enabled when configured. Transient 429 and selected network/5xx failures retry with backoff and jitter. Access and configuration errors stop the affected job. Truncated extraction and drafting outputs split into smaller checkpointed units.
 
-`automation_requirements.py` runs per-file batches over a versioned manifest. The default source budget is 16,000 serialized bytes per batch before prompt and schema overhead. Candidate and fact source IDs are checked locally. Procurement portal submissions are routed to administrative current actions. Rated criteria retain scored status. Uncertain candidates get a focused classification attempt using their cited passages. Consolidation merges normalized equivalents when classification and conditions agree. It sends closely worded pairs for a separate equivalence judgment only when their conditions, numbers, date terms and polarity match. Explicitly identifying replacement language in an amendment can retire a matching clause while retaining the older source and conditions in the reviewer view. Ambiguous variants and conflicting facts remain visible. The tender's stated language can drive the proposal language, with a German or English workstation preference available.
+`automation_requirements.py` runs per-file batches over a versioned manifest. The default source budget is 16,000 serialized bytes per batch before prompt and schema overhead. Candidate and fact source IDs are checked locally. Procurement portal submissions are routed to administrative current actions. Rated criteria retain scored status. Uncertain candidates get a focused classification attempt using their cited passages. Consolidation merges normalized equivalents when classification and conditions agree. It sends closely worded pairs for a separate equivalence judgment only when their conditions, numbers, date terms and polarity match. Explicitly identifying replacement language in an amendment can retire a matching clause while retaining the older source and conditions in the reviewer view. Ambiguous variants and conflicting facts remain visible. Auto uses the tender's cited submission language when available and keeps requirements in their source language. German and English are supported. Confirm an explicit setting if automatic selection remains unresolved.
 
 The automated reader in `documents.py` retains readable PDF pages, reports page-level gaps, and tries local OCR when `pdftoppm` and Tesseract are available. Legacy parsers retain their previous entry-point behavior. Citations preserve exact file, version, locator and original excerpt. The renderer and reviewer see the same saved references.
 
@@ -62,7 +62,7 @@ The automated reader in `documents.py` retains readable PDF pages, reports page-
 
 **Output.** Evidence is prepared automatically from eligible inventory entries. It shows confirmed, partial, verified missing and search incomplete, with exact locators and rejected candidates. Consultants can browse another allowed source, replace citations and save an assessment. Current actions and proposed methods stay in criterion coverage. Reviewer suggestions show supporting profile passages, criterion overlap, and ties. Reviewers can change the assignment independently of the mail destination.
 
-**Logic.** `automation_evidence.py` caches parsed sources by root, path and hash and reuses the existing local BM25 index. It shortlists up to five excerpts and assesses up to four unresolved proof criteria per model call. A missing decision becomes search incomplete if the shortlist, document access or clipped excerpts limited the assessment. Assessment reuse is keyed to the criterion, model and actual candidate excerpts. Changed knowledge inputs lead to retrieval again and invalidate provider judgments whose shortlists changed. A saved evidence edit is reused when all its cited passage IDs still resolve.
+**Logic.** `automation_evidence.py` caches parsed sources by root, path and hash and reuses the existing local BM25 index. Manual assessments carry their proof-criterion and source-version basis, and draft generation receives the assessed spans. It shortlists up to five excerpts and assesses up to four unresolved proof criteria per model call. A missing decision becomes search incomplete if the shortlist, document access or clipped excerpts limited the assessment. Assessment reuse is keyed to the criterion, model and actual candidate excerpts. Changed knowledge inputs lead to retrieval again and invalidate provider judgments whose shortlists changed. A saved evidence edit is reused when all its cited passage IDs still resolve.
 
 The reviewer rank uses locally indexed team material. It recognizes named CVs and instructor forms in the inventory, or reads a local `reviewer_profiles.json` override in the workspace directory. Each entry has `name`, `role`, `profile_path` (the exact eligible inventory path), and `location` (for example `Page 1`). A candidate must have a named source and overlapping core work terms. A tie or zero credible matches goes to local triage. Historical citations never establish current staffing availability.
 
@@ -118,11 +118,31 @@ The reviewer rank uses locally indexed team material. It recognizes named CVs an
 
 **Verification.** The capture transport received the saved link, reviewer label and reason. Tests covered duplicate delivery, temporary rejection and retry, retention of the same Message-ID, stable link reopening, edits, regeneration and checksum approval after reopening. Checks used local fixture delivery. A live provider and SMTP configuration were unavailable for end-to-end live validation, and Microsoft PowerPoint and Windows were unavailable on this workstation. The Inno Setup recipe is ready for a Windows build with `ISCC.exe packaging\windows\TenderWorkbench.iss`, followed by a first launch and restart check on Windows. The active consultant review and edit time has not been measured, so the 30-minute target remains unverified. [Inno Setup file packaging documentation](https://jrsoftware.org/inno-setup/documentation/topic_filessection.htm)
 
-[Outbox](mesakumo/automation_mail.py) · [Offline pilot](tests/pilot_automation.py) · [Windows launcher](packaging/windows/Launch-TenderWorkbench.cmd) · [Installer recipe](packaging/windows/TenderWorkbench.iss)
+[Outbox](mesakumo/automation_mail.py) · [Offline pilot](tests/pilot_automation.py) · [Windows setup](packaging/windows/README.md) · [Windows launcher](packaging/windows/Launch-TenderWorkbench.cmd) · [Installer recipe](packaging/windows/TenderWorkbench.iss)
 
-## Reproduce the checks
+## Follow-up verification and evaluation
 
-The final offline suite passed 112 tests, including 15 automated-workflow tests.
+The [execution ledger](docs/reviews/automated-tender-workflow.md) records current
+behavior and verification. The original phase verification below remains
+historical. New phases and language handling can trigger a one-time preparation
+update for prior snapshots. Their review links and revision history stay available.
+
+The [distributable evaluation cases](tests/fixtures/redesign_evaluation.json)
+include synthetic input for each scenario. Use an approved local evaluation
+workflow to prepare each case independently. Resolve the result as a consultant
+would, then record whether the expected criterion was recalled, its classified
+scope and response, the number of evaluated and unsupported claims, and measured
+active correction time. Leave time null for untimed cases. The scorer does not
+call any provider or inspect private participant files.
+
+```sh
+.venv/bin/python tests/evaluate_redesign.py --annotation-template > observations.json
+.venv/bin/python tests/evaluate_redesign.py --observations observations.json
+```
+
+## Reproduce the original phase checks
+
+The original implementation passed 112 offline tests. See the follow-up ledger for the current suite.
 
 ```sh
 MESAKUMO_LLM_PROVIDER=disabled .venv/bin/python -m unittest discover -s tests -q

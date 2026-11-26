@@ -12,13 +12,14 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 TEMPLATE_SHA256 = 'c6db0bee73294c0b3b6a5ce514158fd97526a98e7761f1c4ede90c3de20d26d3'
-RENDERER = 'template-fill-4'
+RENDERER = 'template-fill-5'
 P = 'http://schemas.openxmlformats.org/presentationml/2006/main'
 A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 NS = {'p': P, 'a': A, 'r': R}
 PRESENTATION = 'ppt/presentation.xml'
+COVER_LIMITS = {'scope': 100, 'client': 90}
 
 # Slide number, title, content, footer, retained decorative elements, line and text budgets.
 SLOTS = {
@@ -213,7 +214,7 @@ def page_values(role, page, english, fields):
         slots = [(10, 15), (7, 18), (8, 25), (9, 21), (11, 12)]
         values = {slot[0]: [line] for slot, line in zip(slots, page)}
         if fields:
-            values[10] = [' · '.join(field) for field in fields] + values.get(10, [])
+            values.update({slot[0]: [' · '.join(field)] for slot, field in zip(slots, fields)})
         return values, tuple(slot[1] for slot in slots if slot[0] in values)
     if role == 'timeline':
         values = {175: page}
@@ -226,7 +227,7 @@ def page_values(role, page, english, fields):
     return {}, ()
 
 
-def _paginate(claims, lines, length):
+def _paginate(claims, lines, length, *, keep_claims=False):
     import textwrap
 
     content = []
@@ -234,7 +235,10 @@ def _paginate(claims, lines, length):
         text = claim['text']
         if claim['kind'] == 'open':
             text = '⚠ ' + text
-        content.extend(textwrap.wrap(text, width=length, break_on_hyphens=False) or [''])
+        if keep_claims:
+            content.append(text)
+        else:
+            content.extend(textwrap.wrap(text, width=length, break_on_hyphens=False) or [''])
     return [content[i:i + lines] for i in range(0, len(content), lines)]
 
 
@@ -286,11 +290,15 @@ def render(template, title, phase, snapshot):
         entry.set(tag(R, 'id'), rid)
 
     facts = snapshot.get('facts', {})
-    client = facts.get('client', {}).get('value', '')
+    cover = snapshot.get('cover', {})
+    client = cover.get('client') or facts.get('client', {}).get('value', '')
     suffix = ' · ' + phase if phase != 'single' else ''
-    scope = facts.get('scope', {}).get('value', title + suffix)
-    add_slide(1, {3: [scope[:100]], 4: [client[:90]]})
+    scope = cover.get('scope') or facts.get('scope', {}).get('value', title + suffix)
     issues = []
+    for label, value in (('scope', scope), ('client', client)):
+        if len(value) > COVER_LIMITS[label]:
+            issues.append(f"Cover {label} exceeds the mapped width. Review it and save shorter display text in Proposal.")
+    add_slide(1, {3: [scope], 4: [client]})
     for group in snapshot.get('chapters', []):
         role = group['role']
         if role not in SLOTS:
@@ -299,10 +307,16 @@ def render(template, title, phase, snapshot):
         source, heading, body, footer, keep, lines, length = SLOTS[role]
         if any(len(word) > length for claim in group['claims'] for word in claim['text'].split()):
             issues.append(f"Review wrapping in {group['title']}. A word exceeds the mapped text width.")
-        for index, page in enumerate(_paginate(group['claims'], lines, length), 1):
+        per_card = role in ('context', 'participation', 'team', 'pricing')
+        pages = _paginate(group['claims'], lines, length, keep_claims=per_card)
+        fields = group.get('fields', [])
+        if fields and role == 'pricing':
+            # The price boxes have fixed heights. Put verified price rows on their own page.
+            pages.insert(0, [])
+        for index, page in enumerate(pages or [[]], 1):
             chapter_title = group['title'] + (f' ({index})' if index > 1 else '')
-            fields = group.get('fields', []) if index == 1 else []
-            mapped, decorations = page_values(role, page, english, fields)
+            page_fields = fields if index == 1 else []
+            mapped, decorations = page_values(role, page, english, page_fields)
             values = {heading: [chapter_title], footer: [title[:65]]}
             values.update(mapped or {body: page})
             if role == 'outcomes':

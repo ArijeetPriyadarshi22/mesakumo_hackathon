@@ -11,13 +11,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .automation_store import canonical, fingerprint
-from .discovery import scan
+from .discovery import offer_archives, scan
 from .documents import LocalProcessor
 
 PARSER = 'local-3'
 EXTRACTION = 'criteria-4'
 CHAPTERS = ('context', 'approach', 'outcomes', 'participation', 'timeline', 'team', 'pricing', 'annexes')
-FACTS = ('client', 'scope', 'deadline', 'language', 'phase', 'deliverable')
 
 
 class Structured(BaseModel):
@@ -123,7 +122,7 @@ def parse_grounded(result, sources):
             item.update(scope='administrative', response='current_action')
         if item['scope'] == 'administrative':
             item['response'] = 'current_action' if item['response'] != 'none' else 'none'
-        if item['scope'] == 'proposal' and item['obligation'] == 'scored' and item['response'] == 'none':
+        if item['scope'] == 'proposal' and item['obligation'] in ('mandatory', 'scored') and item['response'] == 'none':
             item['response'] = 'uncertain'
     return result
 
@@ -139,10 +138,40 @@ Use uncertain where scope, obligation or response need is unclear. Keep independ
 conditions and scored items separate. Use scope proposal when a scored narrative is required.
 Respect phase applicability. An explicit buyer amendment can supersede an earlier requirement
 only when it identifies the earlier provision. Preserve sources and potentially conflicting values.
-Facts may include client, scope, deadline, language, phase and deliverable. Cite supplied keys.
+Facts may include client, scope, deadline, language, phase and deliverable. Report language only
+when the buyer specifies the required submission language, quoting the language name. Cite supplied keys.
 Sources:
 {canonical(batch)}"""
     return parse_grounded(call(prompt, Extraction, max_tokens=8000), batch)
+
+
+_LANGUAGE_NAMES = {'de': r'deutsch(?:e[rmns]?)?|german|de', 'en': r'englisch(?:e[rmns]?)?|english|en'}
+
+
+def output_language(preference, facts, sources):
+    if preference in ('de', 'en'):
+        return preference, ''
+    declared = facts.get('language')
+    if declared:
+        values = [declared['value'], *(item['value'] for item in declared.get('alternatives', []))]
+        labels = [{code for code, names in _LANGUAGE_NAMES.items()
+                   if re.search(r'\b(?:' + names + r')\b', value, re.I)} for value in values]
+        if len(labels[0]) == 1 and all(label == labels[0] for label in labels):
+            return next(iter(labels[0])), ''
+        return 'de', 'Tender submission language is unsupported or ambiguous. Confirm English or German in settings.'
+    quoted = ' '.join(source['quote'] for source in sources.values()).casefold()
+    markers = {'de': r'\b(?:und|der|die|das|muss|angebot|auftrag)\b',
+               'en': r'\b(?:the|and|must|shall|bid|tender|proposal)\b'}
+    counts = {code: len(re.findall(pattern, quoted)) for code, pattern in markers.items()}
+    best = max(counts, key=counts.get)
+    if counts[best] >= 2 and counts[best] > 2 * counts['en' if best == 'de' else 'de']:
+        return best, ''
+    return 'de', 'The submission language could not be inferred. Confirm English or German in settings.'
+
+
+def planning_context(rows):
+    return [dict(file=row['path'], text=(row['content'] or b'')[:6000].decode('utf-8-sig', errors='replace'),
+                 issue=row['error']) for row in rows if row['role'] == 'Internal hackathon guidance']
 
 
 def criterion_key(row):
@@ -213,13 +242,20 @@ def apply_amendment_precedence(related, sources):
     return remaining
 
 
-def read_manifest(folder, phase):
-    rows = scan(folder, phase)
+def read_manifest(folder, phase, *, capture=True):
+    archives = offer_archives(folder)
+    rows = scan(folder, phase, phase_archives=archives, capture=capture)
     if phase == 'offer':
+        missing = archives - {row['path'] for row in rows}
+        if not archives:
+            missing = {'.tender-phases.json'}
+        rows.extend(dict(path=path, role='Offer phase input', content=None, version=None,
+                         error='The offer archive is unavailable. Restore it or declare its path.')
+                    for path in sorted(missing))
         rows = [row for row in rows if '!/' in row['path']
                 or not re.search(r'teilnahmewettbewerb|teilnahmeantrag', row['path'], re.I)]
     return rows, [[r['path'], r['role'], r['error'],
-                   hashlib.sha256(r['content']).hexdigest() if r['content'] is not None else None] for r in rows]
+                   hashlib.sha256(r['content']).hexdigest() if r['content'] is not None else r['version']] for r in rows]
 
 
 class Reclassification(Structured):

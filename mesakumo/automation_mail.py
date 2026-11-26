@@ -10,10 +10,7 @@ from uuid import uuid4
 from .automation_store import fingerprint
 
 
-def notice_for(key, project, snapshot, port):
-    previous = project['snapshot'].get('review_episode')
-    episode = previous if previous and not project['approval'] else uuid4().hex
-    snapshot['review_episode'] = episode
+def review_assignment(snapshot):
     suggested = snapshot.get('reviewer', {}).get('match')
     override = snapshot.get('reviewer_override')
     matched = override or (suggested and suggested['name'])
@@ -23,8 +20,15 @@ def notice_for(key, project, snapshot, port):
         reason = f"Profile matches {len(suggested['reasons'])} core criteria."
     else:
         reason = 'No single credible reviewer match. Send to local triage.'
+    return dict(reviewer=matched or 'Local triage', triage=not matched, reason=reason)
+
+
+def notice_for(key, project, snapshot, port):
+    previous = project['snapshot'].get('review_episode')
+    episode = previous if previous and not project['approval'] else uuid4().hex
+    snapshot['review_episode'] = episode
     return dict(episode=episode, project=project['snapshot'].get('project_name') or snapshot['project_name'],
-                reviewer=matched or 'Local triage', triage=not matched, reason=reason,
+                **review_assignment(snapshot),
                 url=f'http://localhost:{port}/?project={key}&tab=review')
 
 
@@ -59,13 +63,13 @@ def dispatch(store, transport=smtp_transport, *, recipient=None, triage=None, se
             UPDATE review_outbox SET state='uncertain', diagnostic='Interrupted during delivery. Verify receipt.'
             WHERE state='sending' AND due<=?
         """, (now,))
-        rows = db.execute("""
+        selected = db.execute("""
             SELECT o.* FROM review_outbox o JOIN automation_projects p ON p.id=o.project
             WHERE o.state IN ('queued','retry') AND o.due<=? AND p.checksum IS NOT NULL
                 AND json_extract(p.snapshot, '$.review_episode')=o.episode
-            ORDER BY o.due,o.project LIMIT 100
-        """, (now,)).fetchall()
-        selected = next((row for row in rows if (triage if json.loads(row['payload'])['triage'] else recipient)), None)
+                AND CASE WHEN json_extract(o.payload, '$.triage') THEN ? ELSE ? END
+            ORDER BY o.due,o.project LIMIT 1
+        """, (now, bool(triage), bool(recipient))).fetchone()
         if selected is None:
             return False
         payload = json.loads(selected['payload'])
@@ -90,7 +94,14 @@ def dispatch(store, transport=smtp_transport, *, recipient=None, triage=None, se
         state, diagnostic = 'failed', 'Check SMTP authentication and address settings.'
     except Exception:
         state, diagnostic = 'uncertain', 'Delivery was interrupted. Verify receipt before retrying.'
-    with store.connect() as db:
+    with store.write() as db:
+        # A reassignment during an attempt only changes a definitively rejected delivery.
+        if state == 'retry':
+            current = store.project(key[0], db=db)['snapshot']
+            if current.get('review_episode') == key[1] and 'project_name' in current:
+                payload.update(review_assignment(current))
+                db.execute('UPDATE review_outbox SET payload=? WHERE project=? AND episode=? AND token=?',
+                           (json.dumps(payload), *key, reservation))
         db.execute("""
             UPDATE review_outbox SET state=?, diagnostic=?,token=NULL,due=?
             WHERE project=? AND episode=? AND state='sending' AND token=?
