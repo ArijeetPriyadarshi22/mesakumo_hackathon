@@ -58,7 +58,7 @@ def offer_archives(pack):
     }
 
 
-def scan(pack, phase, *, phase_archives=None, capture=True):
+def scan(pack, phase, *, phase_archives=None, capture=True, check_active=None):
     """Return actual files plus applicable ZIP members; keep aliases visible."""
     roles = inventory()
     archive_policy = phase_archives is not None
@@ -73,6 +73,8 @@ def scan(pack, phase, *, phase_archives=None, capture=True):
             content = None
         rows.append(dict(path=name, role=role, content=content, error=error, version=version, inventory='Listed' if unicodedata.normalize('NFC', pack.name + '/' + name) in roles else 'Actual file absent from CSV'))
     for path in sorted(pack.rglob('*')):
+        if check_active is not None:
+            check_active()
         if not path.is_file() or path.is_symlink() or any(s.startswith('.') for s in path.relative_to(pack).parts): continue
         name = path.relative_to(pack).as_posix()
         if archive_policy and name in phase_archives and phase != 'offer':

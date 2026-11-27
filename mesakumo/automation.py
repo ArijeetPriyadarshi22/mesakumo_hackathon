@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from . import automation_proposal as proposal
 from . import automation_requirements as requirements
 from .automation_mail import dispatch, notice_for
 from .automation_model import ModelCalls, model_profile, recoverable_content
-from .automation_store import fingerprint
+from .automation_store import JobStopped, fingerprint
 from .evidence import evidence_inventory
 from .final_export import read_template
 from .gemini import ProviderError
@@ -49,14 +50,14 @@ class Inputs:
     key: str
 
 
-def prepare_inputs(project, snapshot, store, *, capture=False):
+def prepare_inputs(project, snapshot, store, *, capture=False, check_active=None):
     folder = Path(project['folder'])
     if not folder.is_dir():
         raise ValueError('The tender folder is unavailable. Restore the folder and retry.')
     root = folder.parent
-    rows, manifest = requirements.read_manifest(folder, project['phase'], capture=capture)
+    rows, manifest = requirements.read_manifest(folder, project['phase'], capture=capture, check_active=check_active)
     inventory = evidence_inventory()
-    knowledge = evidence.manifest(root, inventory)
+    knowledge = evidence.manifest(root, inventory, check_active=check_active)
     profile_path = store.path.parent / 'reviewer_profiles.json'
     profiles, profile_hash = evidence.profile_data(profile_path)
     template, template_issue = get_template(root)
@@ -99,11 +100,24 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
     snapshot = copy.deepcopy(project['snapshot'])
     folder, phase = Path(project['folder']), project['phase']
 
-    def progress(stage, done=0, total=0):
-        store.progress(key, token, stage, done, total)
+    def progress(stage, done=0, total=0, *, workflow_stage=None):
+        store.progress(key, token, stage, done, total, workflow_stage=workflow_stage)
+
+    def check_active(db=None):
+        if db is not None:
+            store.assert_claim(db, key, token)
+        else:
+            with store.connect() as connection:
+                store.assert_claim(connection, key, token)
+
+    def wait(seconds):
+        until = time.monotonic() + seconds
+        while (remaining := until - time.monotonic()) > 0:
+            time.sleep(min(1, remaining))
+            check_active()
 
     progress('Checking inputs')
-    inputs = prepare_inputs(project, snapshot, store)
+    inputs = prepare_inputs(project, snapshot, store, check_active=check_active)
     retry_content = action == 'reuse' and bool(snapshot.get('extraction_gaps') or snapshot.get('generation_gaps'))
     if (action == 'reuse' and inputs.key == project['input_key'] and project['deck']
             and not snapshot.get('dirty') and not retry_content):
@@ -115,16 +129,17 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
     language = inputs.language
     active = action == 'update' or not same_content or retry_content
     if active:
-        captured = prepare_inputs(project, snapshot, store, capture=True)
+        captured = prepare_inputs(project, snapshot, store, capture=True, check_active=check_active)
         if captured.key != inputs.key:
             raise ConflictError('Sources changed during preparation. Retry with the current material.')
         inputs = captured
         generation_gaps = []
+        check_active()
         model = model_factory()
         profile = model_profile(model)
         model_key = snapshot.get('model_profile', profile) if action == 'reuse' else profile
         snapshot.update(model_profile=model_key, effective_model=profile)
-        call_service = ModelCalls(store, model, key, progress)
+        call_service = ModelCalls(store, model, key, progress, sleep=wait, check_active=check_active)
 
         def call(*args, **kwargs):
             if isinstance(model, DisabledModel):
@@ -134,6 +149,7 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             return call_service(*args, **kwargs)
 
         def unit(stage, inputs, work):
+            check_active()
             cache_key = fingerprint(inputs)
             saved = store.cached(key, stage, cache_key)
             if saved is not None:
@@ -167,10 +183,10 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             parts = [extract(dict(entries[:pivot])), extract(dict(entries[pivot:]))]
             return {name: parts[0][name] + parts[1][name] for name in ('criteria', 'facts')}
 
-        def write_chapter(role, label, draft_inputs, source_inputs, version):
+        def write_chapter(role, label, draft_inputs, source_inputs, context, version):
             def request():
                 try:
-                    return proposal.draft_chapter(call, role, label, draft_inputs, source_inputs)
+                    return proposal.draft_chapter(call, role, label, draft_inputs, source_inputs, context)
                 except (ProviderError, ValueError) as error:
                     if not recoverable_content(error) or len(draft_inputs) < 2:
                         raise
@@ -178,15 +194,14 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
 
             try:
                 saved = unit('chapter', [proposal.PLAN_VERSION, model_key, role, label, draft_inputs, source_inputs,
-                                         version], request)
+                                         context, version], request)
             except (ProviderError, ValueError) as error:
                 if isinstance(error, ConflictError) or not recoverable_content(error):
                     raise
                 generation_gaps.append(dict(file='Chapter ' + role, detail=str(error)))
                 i = requirements.CHAPTERS.index(role)
-                wording = 'Provide a validated response.' if label == 'English' else 'Geprüfte Antwort ergänzen.'
                 return dict(title=proposal.TITLES['en' if label == 'English' else 'de'][i],
-                            claims=[dict(text=wording, kind='open', requirements=list(draft_inputs), sources=[])])
+                            claims=proposal.fallback_claims(draft_inputs))
             if not saved.get('split'):
                 return saved
             items = list(draft_inputs.items())
@@ -195,7 +210,8 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             for part in (dict(items[:pivot]), dict(items[pivot:])):
                 cited = {sid for criterion in part.values() for sid in criterion['citations']}
                 excerpts = {sid: source_inputs[sid] for sid in sorted(cited)}
-                drafts.append(write_chapter(role, label, part, excerpts, version))
+                drafts.append(write_chapter(role, label, part, excerpts,
+                                            {rid: context[rid] for rid in part if rid in context}, version))
             return dict(title=drafts[0]['title'], claims=drafts[0]['claims'] + drafts[1]['claims'])
 
         try:
@@ -228,10 +244,11 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             if internal:
                 snapshot['conflicts'].append('Review internal planning assumptions and confirm any proposed partner commitments.')
             if not criteria:
-                snapshot['conflicts'].append('No criteria were extracted. Review the tender before approval.')
+                snapshot['conflicts'].append('No criteria were extracted. Check the tender requirements.')
 
-            progress('Indexing evidence')
-            readings = evidence.corpus(store, folder.parent, inputs.inventory, inputs.knowledge)
+            progress('Indexing evidence', workflow_stage='evidence')
+            readings = evidence.corpus(store, folder.parent, inputs.inventory, inputs.knowledge,
+                                       check_active=check_active)
             snapshot['knowledge_gaps'] = [dict(file=r.source.relative_path, detail=r.detail)
                                           for r in readings if r.status != 'Read']
             assessments, citations, index = evidence.match(
@@ -243,14 +260,14 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
             snapshot.update(evidence=assessments, evidence_sources=citations, reviewer=reviewer)
 
             plan = list(proposal.chapter_units(criteria))
+            progress('Drafting chapters', total=len(plan), workflow_stage='proposal')
             generated = {group['id']: group for group in snapshot.get('chapter_edits', {}).values()}
             groups = []
             refresh = snapshot.get('refresh_group', {})
             chapter_versions = snapshot.setdefault('chapter_versions', {})
             if refresh:
                 chapter_versions[refresh['id']] = refresh['version']
-            for count, (role, group_id, items) in enumerate(plan):
-                progress('Drafting chapters', count, len(plan))
+            for count, (role, group_id, items) in enumerate(plan, start=1):
                 draft_inputs, source_inputs = proposal.plan_context(items, sources, citations, assessments)
                 manual = generated.pop(group_id, None)
                 if manual is not None:
@@ -258,10 +275,12 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
                     if group['context_key'] != fingerprint([draft_inputs, source_inputs]):
                         snapshot['conflicts'].append(f'Review saved wording in {group_id} after its inputs changed.')
                 else:
+                    context = proposal.supplemental_context(items, index, assessments)
                     group = write_chapter(role, language_label(language), draft_inputs, source_inputs,
-                                          chapter_versions.get(group_id))
+                                          context, chapter_versions.get(group_id))
                 groups.append(dict(group, id=group_id, role=role,
                                    context_key=fingerprint([draft_inputs, source_inputs])))
+                progress('Drafting chapters', count, len(plan))
             if generated:
                 snapshot['conflicts'].append('Saved slide edits need reassignment after the chapter structure changed.')
             snapshot['chapters'] = groups
@@ -278,7 +297,7 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
     snapshot['coverage'] = list(proposal.coverage(snapshot.get('criteria', []), snapshot.get('chapters', []),
                                                   snapshot.get('evidence', {})))
     snapshot.update(template_hash=inputs.template_hash, render_issues=[], dirty=None)
-    progress('Rendering PowerPoint')
+    progress('Rendering PowerPoint', workflow_stage='review')
     result = None
     try:
         if inputs.template is None:
@@ -292,9 +311,15 @@ def prepare(store, key, action, token, model_factory=configured_model, *, port=8
         snapshot['render_issues'] = [f'PowerPoint renderer failed ({type(error).__name__}).']
         snapshot['dirty'] = 'render'
     notice = notice_for(key, project, snapshot, port) if result else None
-    store.save_revision(key, project['revision'], snapshot, inputs.key, result, token=token, notice=notice)
     if result is None:
-        raise ValueError('PowerPoint render needs attention. The project work was saved.')
+        job_result = ('failed', 'PowerPoint render needs attention. The project work was saved.')
+    elif snapshot.get('extraction_gaps') or snapshot.get('generation_gaps'):
+        job_result = ('partial', 'Some preparation units need a retry.')
+    else:
+        job_result = ('ready', None)
+    store.save_revision(key, project['revision'], snapshot, inputs.key, result, token=token, notice=notice,
+                        job_result=job_result)
+    return True
 
 
 def run_once(store, model_factory=configured_model, *, port=8501):
@@ -315,20 +340,19 @@ def run_once(store, model_factory=configured_model, *, port=8501):
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
-        prepare(store, key, action, token, model_factory, port=port)
-        prepared = store.project(key)['snapshot']
-        gaps = prepared.get('extraction_gaps') or prepared.get('generation_gaps')
-        store.finish(key, token, 'partial' if gaps else 'ready',
-                     'Some preparation units need a retry.' if gaps else None)
-    except (ModelUnavailable, ValueError, OSError) as error:
         try:
-            store.finish(key, token, 'failed', str(error))
-        except ConflictError:
-            pass
-    except Exception as error:
-        LOG.error('Tender preparation failed (%s).', type(error).__name__)
+            if prepare(store, key, action, token, model_factory, port=port):
+                return True
+            status, diagnostic = 'ready', None
+        except JobStopped:
+            status, diagnostic = 'stopped', None
+        except (ModelUnavailable, ValueError, OSError) as error:
+            status, diagnostic = 'failed', str(error)
+        except Exception as error:
+            LOG.error('Tender preparation failed (%s).', type(error).__name__)
+            status, diagnostic = 'failed', 'Unexpected preparation error (' + type(error).__name__ + ').'
         try:
-            store.finish(key, token, 'failed', 'Unexpected preparation error (' + type(error).__name__ + ').')
+            store.finish(key, token, status, diagnostic)
         except ConflictError:
             pass
     finally:
@@ -361,15 +385,13 @@ def approve_current(store, project, reviewer):
     if inputs.key != project['input_key']:
         raise ConflictError('Inputs changed since this deck was generated. Prepare a new draft.')
     return store.approve(project['id'], project['revision'], project['checksum'], reviewer,
-                         template_hash=inputs.template_hash, blockers=proposal.blockers)
+                         template_hash=inputs.template_hash)
 
 
 def approved_download(store, project):
     """Verify freshness at the action that issues the exact approved bytes."""
     if not project.get('approval') or not project.get('deck'):
         raise ConflictError('Approve the current deck before downloading it.')
-    if proposal.blockers(project['snapshot']):
-        raise ConflictError('Resolve final blockers before downloading the approved deck.')
     inputs = prepare_inputs(project, project['snapshot'], store)
     if inputs.key != project['input_key']:
         raise ConflictError('Project files have changed since approval. Prepare a current deck.')

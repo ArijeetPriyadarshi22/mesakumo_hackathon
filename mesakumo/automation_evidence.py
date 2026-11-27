@@ -16,7 +16,8 @@ from .evidence import EvidenceReading, read_evidence, resolve_evidence_path
 from .evidence_matching import LexicalIndex, current_action, terms
 from .gemini import ProviderError
 
-ASSESSMENT = 'proof-2'
+ASSESSMENT = 'proof-3'
+CANDIDATE_LIMIT = 8
 
 
 class Proof(Structured):
@@ -31,9 +32,11 @@ class Assessments(Structured):
     assessments: list[Proof]
 
 
-def manifest(root, inventory):
+def manifest(root, inventory, *, check_active=None):
     versions = {}
     for relative in inventory:
+        if check_active is not None:
+            check_active()
         try:
             path = resolve_evidence_path(root, relative)
             limit = 64 * 1024**2 if path.suffix.lower() == '.pptx' else MAX_FILE_BYTES
@@ -47,10 +50,12 @@ def manifest(root, inventory):
     return versions
 
 
-def corpus(store, root, inventory, versions):
+def corpus(store, root, inventory, versions, *, check_active=None):
     result = []
     root_key = 'corpus-' + fingerprint(str(root.resolve()))
     for relative, version in versions.items():
+        if check_active is not None:
+            check_active()
         key = fingerprint([PARSER, relative, version, inventory[relative].role])
         row = store.cached(root_key, 'index', key)
         if row is None:
@@ -106,7 +111,16 @@ def proof_span(row, text, limit=1600):
 
 
 def shortlist(index, item):
-    ids = index.search(' '.join([item['text'], *item['conditions']]), limit=5)
+    combined = ' '.join([item['text'], *item['conditions']])
+    primary = index.search(combined, limit=CANDIDATE_LIMIT)
+    focused = (pid for query in dict.fromkeys([item['text'], *item['conditions']]) if query != combined
+               for pid in index.search(query, limit=3))
+    ranked = list(dict.fromkeys([*primary, *focused]))
+    by_file = {}
+    for pid in ranked:
+        source, _ = index.entries[pid]
+        by_file.setdefault(source.relative_path, pid)
+    ids = list(dict.fromkeys([*primary[:3], *by_file.values(), *ranked]))[:CANDIDATE_LIMIT]
     citations = {pid: index.citation(pid) for pid in ids}
     for citation in citations.values():
         citation['excerpt'] = proof_span(item, citation['excerpt'])
@@ -116,11 +130,17 @@ def shortlist(index, item):
 def assess(call, group):
     payload = {row['id']: dict(criterion=row['text'], conditions=row['conditions'], candidates=candidates)
                for row, candidates in group}
-    prompt = """Assess proof for each criterion using only its listed candidate excerpts.
-Confirmed requires explicit evidence satisfying all conditions. Partial requires a cited
-subset. Record unsupported candidate IDs in rejected. Historical bids describe proposals
-and cannot establish delivery, current staffing, signatures, prices or commitments.
-Use search incomplete for insufficient search. Cite only candidate IDs for that criterion.
+    prompt = """Assess each criterion using its listed excerpts. Look for equivalent meaning,
+including paraphrases, different terminology, and evidence spread across several passages.
+Use confirmed when the cited passages together substantiate the full requirement, including any
+thresholds, dates, and other explicit conditions. Use partial when the material credibly supports
+one part of the requirement or shows related experience or transferable skills. Cite the passages
+and explain briefly what they support and what remains unverified. A historical offer describes
+what was proposed. Use evidence of actual delivery for delivery requirements and current sources
+for current staffing, signatures, prices, or commitments. Use search incomplete when the excerpts
+do not support a judgment and coverage is insufficient. Use missing when the reviewed material
+offers no credible support and coverage is adequate. Cite only IDs listed for that criterion.
+Put unrelated or contradicted candidates in rejected.
 """ + canonical(payload)
     assessed = call(prompt, Assessments, max_tokens=2400)['assessments']
     expected = {row['id']: candidates for row, candidates in group}

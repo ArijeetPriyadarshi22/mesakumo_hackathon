@@ -11,6 +11,12 @@ from uuid import uuid4
 from .discovery import PHASE_FILE, identity, offer_archives, packs
 from .persistence import ConflictError, ProjectStore
 
+ACTIVE_JOB_STATUSES = ('queued', 'running', 'stopping')
+
+
+class JobStopped(Exception):
+    """The worker still owns the job, but the user requested a stop."""
+
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
@@ -59,7 +65,8 @@ class AutomationStore(ProjectStore):
                 CREATE TABLE IF NOT EXISTS jobs (
                     project TEXT PRIMARY KEY, status TEXT NOT NULL, action TEXT NOT NULL,
                     token TEXT, lease_until REAL, stage TEXT, done INTEGER, total INTEGER,
-                    diagnostic TEXT, updated REAL NOT NULL
+                    diagnostic TEXT, updated REAL NOT NULL, request_id TEXT,
+                    workflow_stage TEXT NOT NULL DEFAULT 'requirements'
                 );
                 CREATE TABLE IF NOT EXISTS automation_history (
                     project TEXT, revision INTEGER, input_key TEXT, snapshot TEXT,
@@ -80,6 +87,20 @@ class AutomationStore(ProjectStore):
                     due REAL, token TEXT, diagnostic TEXT, PRIMARY KEY(project, episode)
                 );
             """)
+        with self.write() as db:
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
+            if 'request_id' not in columns:
+                db.execute('ALTER TABLE jobs ADD COLUMN request_id TEXT')
+                db.execute('UPDATE jobs SET request_id=lower(hex(randomblob(16)))')
+            if 'workflow_stage' not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN workflow_stage TEXT NOT NULL DEFAULT 'requirements'")
+                db.execute("""
+                    UPDATE jobs SET workflow_stage=CASE
+                        WHEN action='render' OR stage='Rendering PowerPoint' THEN 'review'
+                        WHEN stage='Drafting chapters' THEN 'proposal'
+                        WHEN stage IN ('Indexing evidence','Evidence') THEN 'evidence'
+                        ELSE 'requirements' END
+                """)
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
@@ -131,7 +152,8 @@ class AutomationStore(ProjectStore):
         with self.connect() as db:
             return [dict(row) for row in db.execute("""
                 SELECT p.id, p.folder, p.phase, p.revision, json_extract(p.snapshot, '$.facts.deadline.value') deadline,
-                       j.status, j.stage, j.done, j.total, j.diagnostic,
+                       j.status, j.stage, j.workflow_stage, j.done, j.total, j.diagnostic, j.request_id,
+                       j.action AS job_action,
                        json_array_length(p.snapshot, '$.manifest') materials,
                        json_array_length(p.snapshot, '$.reading_gaps') gaps, p.checksum
                 FROM automation_projects p LEFT JOIN jobs j ON p.id=j.project ORDER BY p.folder, p.phase
@@ -153,19 +175,33 @@ class AutomationStore(ProjectStore):
             """, (key,)).fetchone())
 
     def enqueue(self, keys, action='reuse'):
+        stage = 'review' if action == 'render' else 'requirements'
         with self.write() as db:
             for key in dict.fromkeys(keys):
                 self.project(key, db=db)
                 db.execute("""
-                    INSERT INTO jobs(project,status,action,updated) VALUES (?,'queued',?,?)
+                    INSERT INTO jobs(project,status,action,updated,request_id,workflow_stage) VALUES (?,'queued',?,?,?,?)
                     ON CONFLICT(project) DO UPDATE SET status='queued', action=excluded.action,
-                        token=NULL, lease_until=NULL, stage=NULL, done=0, total=0, diagnostic=NULL, updated=excluded.updated
-                    WHERE jobs.status NOT IN ('queued','running')
-                """, (key, action, time.time()))
+                        token=NULL, lease_until=NULL, stage=NULL, done=0, total=0, diagnostic=NULL,
+                        updated=excluded.updated, request_id=excluded.request_id, workflow_stage=excluded.workflow_stage
+                    WHERE jobs.status NOT IN ('queued','running','stopping')
+                """, (key, action, time.time(), uuid4().hex, stage))
+
+    def request_stop(self, requests):
+        with self.write() as db:
+            db.executemany("""
+                UPDATE jobs SET status=CASE status WHEN 'queued' THEN 'stopped' ELSE 'stopping' END,
+                    diagnostic=NULL, updated=?
+                WHERE project=? AND request_id=? AND status IN ('queued','running')
+            """, [(time.time(), key, request_id) for key, request_id in requests])
 
     def claim(self):
         now, token = time.time(), uuid4().hex
         with self.write() as db:
+            db.execute("""
+                UPDATE jobs SET status='stopped', token=NULL, lease_until=NULL, updated=?
+                WHERE status='stopping' AND lease_until<=?
+            """, (now, now))
             row = db.execute("""
                 SELECT project,action FROM jobs
                 WHERE status='queued' OR (status='running' AND lease_until<=?)
@@ -173,34 +209,50 @@ class AutomationStore(ProjectStore):
             """, (now,)).fetchone()
             if row is None:
                 return None
-            db.execute("UPDATE jobs SET status='running',token=?,lease_until=?,updated=? WHERE project=?",
+            db.execute("""
+                UPDATE jobs SET status='running',token=?,lease_until=?,updated=?,stage=NULL,done=0,total=0,
+                    workflow_stage=CASE action WHEN 'render' THEN 'review' ELSE 'requirements' END
+                WHERE project=?
+            """,
                        (token, now + self.lease, now, row['project']))
         return row['project'], row['action'], token
 
     def assert_claim(self, db, key, token):
-        row = db.execute("SELECT token,lease_until FROM jobs WHERE project=? AND status='running'", (key,)).fetchone()
-        if row is None or row['token'] != token or row['lease_until'] <= time.time():
+        row = db.execute("SELECT status,token,lease_until FROM jobs WHERE project=?", (key,)).fetchone()
+        if (row is None or row['status'] not in ('running', 'stopping') or row['token'] != token
+                or row['lease_until'] <= time.time()):
             raise ConflictError('This job lease has expired or moved to another worker.')
+        if row['status'] == 'stopping':
+            raise JobStopped
 
-    def progress(self, key, token, stage, done=0, total=0):
+    def progress(self, key, token, stage, done=0, total=0, *, workflow_stage=None):
         with self.write() as db:
             self.assert_claim(db, key, token)
             now = time.time()
-            db.execute('UPDATE jobs SET stage=?,done=?,total=?,lease_until=?,updated=? WHERE project=?',
-                       (stage, done, total, now + self.lease, now, key))
+            db.execute("""
+                UPDATE jobs SET stage=?,done=?,total=?,lease_until=?,updated=?,
+                    workflow_stage=coalesce(?,workflow_stage) WHERE project=?
+            """, (stage, done, total, now + self.lease, now, workflow_stage, key))
 
     def heartbeat(self, key, token):
         now = time.time()
         with self.connect() as db:
             return db.execute("""
-                UPDATE jobs SET lease_until=? WHERE project=? AND token=? AND status='running' AND lease_until>?
+                UPDATE jobs SET lease_until=? WHERE project=? AND token=?
+                    AND status IN ('running','stopping') AND lease_until>?
             """, (now + self.lease, key, token, now)).rowcount == 1
 
-    def finish(self, key, token, status, diagnostic=None):
-        with self.write() as db:
+    def finish(self, key, token, status, diagnostic=None, *, db=None):
+        if db is None:
+            with self.write() as connection:
+                self.finish(key, token, status, diagnostic, db=connection)
+            return
+        try:
             self.assert_claim(db, key, token)
-            db.execute('UPDATE jobs SET status=?,diagnostic=?,token=NULL,lease_until=NULL,updated=? WHERE project=?',
-                       (status, diagnostic, time.time(), key))
+        except JobStopped:
+            status, diagnostic = 'stopped', None
+        db.execute('UPDATE jobs SET status=?,diagnostic=?,token=NULL,lease_until=NULL,updated=? WHERE project=?',
+                   (status, diagnostic, time.time(), key))
 
     def cached(self, project, stage, key):
         with self.connect() as db:
@@ -215,7 +267,7 @@ class AutomationStore(ProjectStore):
             db.execute('INSERT OR IGNORE INTO automation_units VALUES (?,?,?,?,?)',
                        (project, stage, key, canonical(value), time.time()))
 
-    def save_revision(self, key, expected, snapshot, input_key, deck=None, *, token=None, notice=None):
+    def save_revision(self, key, expected, snapshot, input_key, deck=None, *, token=None, notice=None, job_result=None):
         checksum = hashlib.sha256(deck).hexdigest() if deck else None
         with self.write() as db:
             if token is not None:
@@ -237,9 +289,11 @@ class AutomationStore(ProjectStore):
                     ON CONFLICT(project,episode) DO UPDATE SET payload=excluded.payload
                     WHERE review_outbox.state IN ('queued', 'retry')
                 """, (key, notice['episode'], canonical(notice), time.time()))
+            if job_result is not None:
+                self.finish(key, token, *job_result, db=db)
         return revision
 
-    def approve(self, key, revision, checksum, reviewer, *, template_hash, blockers):
+    def approve(self, key, revision, checksum, reviewer, *, template_hash):
         if not reviewer.strip():
             raise ValueError('Enter the reviewer name.')
         with self.write() as db:
@@ -249,10 +303,8 @@ class AutomationStore(ProjectStore):
                     or hashlib.sha256(current['deck'] or b'').hexdigest() != checksum):
                 raise ConflictError('The deck has changed. Regenerate or reload before approving.')
             running = db.execute("SELECT status FROM jobs WHERE project=?", (key,)).fetchone()
-            if running and running['status'] in ('queued', 'running'):
+            if running and running['status'] in ACTIVE_JOB_STATUSES:
                 raise ConflictError('Wait for preparation to finish and review the current deck.')
-            if blockers(current['snapshot']):
-                raise ValueError('Resolve final blockers before approval.')
             if current['approval']:
                 return current['approval']
             approval = {'reviewer': reviewer.strip(), 'checksum': checksum, 'time': time.time(), 'revision': revision}

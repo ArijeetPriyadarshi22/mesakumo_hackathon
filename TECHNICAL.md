@@ -164,8 +164,9 @@ triage address receives them when there is no reviewer match. If you prefer
 to set the addresses in the app, leave the two recipient variables unset
 and save the addresses under **Local folders and language**.
 
-The worker queues a notification when a draft deck is generated. In **Final
-review**, look for **Notification** with the delivery state and attempt count.
+The worker queues a notification when a draft deck is generated. Look for the
+**Review email** status in **Final review**. Expand a delivery issue to see the
+diagnostic and attempt count.
 When it shows `sent`, check your inbox for **Tender proposal ready for
 review**. The link opens the local workspace on the Mac running the app.
 
@@ -186,8 +187,8 @@ export MESAKUMO_AUTOMATION_DIR="$(mktemp -d /tmp/mesakumo-live.XXXXXX)"
    `Angebotstemplate.pptx`. Click **Save local settings**.
 2. Clear **Select all tenders and phases**, select a project and phase, then
    click **Prepare proposals**. Choose a project with a scanned PDF to test OCR.
-3. Review **Tender requirements**, **Evidence**, and **Proposal**. Resolve the
-   blockers shown in **Final review** and regenerate from saved slides if needed.
+3. Review **Tender requirements**, **Evidence**, and **Proposal**. Address any
+   open issues you choose to resolve and regenerate from saved slides if needed.
 4. In **Final review**, check the notification status and use **Load deck
    preview** if those integrations are configured. Enter the reviewer name,
    click **Approve current checksum**, then **Verify approved download** and

@@ -13,7 +13,7 @@ The entry point is `python -m mesakumo`. It opens the persistent Projects worksp
 
 The workspace defaults to `%LOCALAPPDATA%\TenderWorkbench` on Windows and `${XDG_DATA_HOME:-$HOME/.local/share}/TenderWorkbench` on POSIX systems. `MESAKUMO_AUTOMATION_DIR` overrides the default. The review URL uses `http://localhost:8501/?project=<id>&tab=review` and points to the same workspace when the local app runs again on the same port. Keep the app running to continue a job after closing the browser. `python -m mesakumo --worker` can run the worker independently. Set the same `--port` on both processes if you change it.
 
-[Technical handoff](TECHNICAL.md) · [Environment settings](.env.example) · [Follow-up review and execution ledger](docs/reviews/automated-tender-workflow.md)
+[Architecture and workflow guide](docs/tenderworkbench-architecture-and-workflow.md) · [Technical handoff](TECHNICAL.md) · [Environment settings](.env.example) · [Follow-up review and execution ledger](docs/reviews/automated-tender-workflow.md)
 
 ## Phase 0 · Baseline and fixtures
 

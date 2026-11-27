@@ -12,7 +12,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 TEMPLATE_SHA256 = 'c6db0bee73294c0b3b6a5ce514158fd97526a98e7761f1c4ede90c3de20d26d3'
-RENDERER = 'template-fill-5'
+RENDERER = 'template-fill-6'
 P = 'http://schemas.openxmlformats.org/presentationml/2006/main'
 A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -233,8 +233,6 @@ def _paginate(claims, lines, length, *, keep_claims=False):
     content = []
     for claim in claims:
         text = claim['text']
-        if claim['kind'] == 'open':
-            text = '⚠ ' + text
         if keep_claims:
             content.append(text)
         else:

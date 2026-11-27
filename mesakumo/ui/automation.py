@@ -1,4 +1,6 @@
 """Projects and the four review screens for unattended tender preparation."""
+import re
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,9 +12,9 @@ from ..automation import approve_current, approved_download, start_worker
 from ..automation_deck import COVER_LIMITS, open_local_deck, preview_pdf
 from ..automation_evidence import Proof, applicable_review, corpus, effective_assessments, eligible, manifest, review_basis
 from ..automation_mail import statuses
-from ..automation_proposal import blockers, confirm_fields
+from ..automation_proposal import confirm_fields, coverage, review_issues
 from ..automation_requirements import CHAPTERS, Criterion, parse_grounded
-from ..automation_store import AutomationStore, fingerprint, workspace_path
+from ..automation_store import ACTIVE_JOB_STATUSES, AutomationStore, fingerprint, workspace_path
 from ..discovery import participant_directory
 from ..evidence import evidence_inventory
 from ..evidence_matching import LexicalIndex
@@ -39,9 +41,12 @@ def pdf_preview(checksum, _deck):
     return preview_pdf(_deck)
 
 
-def location(project=None, tab='review'):
+def location(project=None, tab=None):
     if project:
-        st.query_params.from_dict({'project': project, 'tab': tab})
+        params = {'project': project}
+        if tab is not None:
+            params['tab'] = tab
+        st.query_params.from_dict(params)
     else:
         st.query_params.clear()
     st.rerun()
@@ -101,45 +106,65 @@ def projects_view(store):
                          help='Rebuild affected material using the configured provider and model.'):
             store.enqueue(selected, 'update')
             st.rerun()
-        project_progress(store, identifiers)
+        project_progress(store, identifiers, selected)
 
     archived = [row for row in store.projects() if row['id'] not in identifiers]
     if archived:
         with st.expander('Projects from previous folders'):
-            for row in archived:
-                st.button(f"{Path(row['folder']).name} · {row['phase']}", key='old-' + row['id'],
-                          on_click=lambda key=row['id']: st.query_params.from_dict({'project': key, 'tab': 'review'}))
+            project_progress(store, [row['id'] for row in archived])
+
+
+def stop_job(container, store, row, *, key):
+    if row['status'] in ('queued', 'running'):
+        container.button('Stop job', key=key, on_click=store.request_stop,
+                         args=([(row['id'], row['request_id'])],))
 
 
 @st.fragment(run_every=3)
-def project_progress(store, identifiers):
-    for row in jobs_table(store, identifiers):
+def project_progress(store, identifiers, selected=()):
+    rows = jobs_table(store, identifiers)
+    selected_jobs = [(row['id'], row['request_id']) for row in rows
+                     if row['id'] in selected and row['status'] in ('queued', 'running')]
+    if selected_jobs:
+        st.button('Stop selected jobs', on_click=store.request_stop, args=(selected_jobs,))
+    for row in rows:
         key = row['id']
-        info, open_col = st.columns([4, 1])
-        info.write(f"**{Path(row['folder']).name}** · {row['phase']} · {row['status'] or 'Not prepared'}")
+        info, open_col, stop_col = st.columns([4, 1, 1])
+        status = row['status'].capitalize() if row['status'] else 'Not prepared'
+        info.write(f"**{Path(row['folder']).name}** · {row['phase']} · {status}")
         if row['materials'] is not None:
             info.caption(f"{row['materials']} materials · {row['gaps'] or 0} reading gaps"
                          + (' · Draft saved' if row['checksum'] else ''))
         if row['deadline']:
             info.caption('Deadline · ' + row['deadline'])
-        if row['stage'] and row['status'] in ('queued', 'running'):
+        if row['stage'] and row['status'] in ACTIVE_JOB_STATUSES:
             info.caption(f"{row['stage']} · {row['done'] or 0}/{row['total'] or '—'}")
-        if row['diagnostic']:
-            info.warning(row['diagnostic'])
         if open_col.button('Open', key='open-' + key):
             location(key)
+        stop_job(stop_col, store, row, key='stop-list-' + key)
 
 
 @st.fragment(run_every=2)
-def status_view(store, key, original_status):
+def status_view(store, previous):
+    key = previous['id']
     row = jobs_table(store, [key])[0]
-    if row['status'] != original_status and row['status'] not in ('queued', 'running'):
+    if any(row[field] != previous[field] for field in ('request_id', 'status', 'workflow_stage')):
         st.rerun(scope='app')
     if row['status'] in ('queued', 'running'):
         st.info(f"{row['status'].capitalize()} · {row['stage'] or 'Preparing'} · "
                 f"{row['done'] or 0}/{row['total'] or '—'}")
-    if row['diagnostic']:
-        st.warning(row['diagnostic'])
+        stop_job(st, store, row, key='stop-project-' + key)
+    elif row['status'] == 'stopping':
+        st.info('Stopping after the current operation reaches a checkpoint.')
+    elif row['status'] == 'stopped':
+        st.info('Stopped. Use Resume preparation to continue.')
+    if row['status'] in ('failed', 'partial'):
+        summary = 'Preparation failed' if row['status'] == 'failed' else 'Preparation needs a retry'
+        if row['diagnostic']:
+            with st.expander(summary):
+                st.text(row['diagnostic'])
+        else:
+            st.caption(summary)
 
 
 def remember_review(key, revision, checksum):
@@ -172,6 +197,13 @@ def citations(ids, sources):
         if item:
             st.caption(f"{sid} · {item.get('file', item.get('filename', ''))} · {item['location']}")
             st.text(item.get('quote', item.get('excerpt', '')))
+
+
+def source_locations(ids, sources):
+    return ', '.join(
+        f"{item.get('file', item.get('filename', ''))} · {item['location']}"
+        for sid in ids if (item := sources.get(sid))
+    )
 
 
 def edit_criterion(store, project, snapshot, row, locked):
@@ -224,26 +256,29 @@ def edit_criterion(store, project, snapshot, row, locked):
 
 def requirements_view(store, project, snapshot, locked):
     st.header('Tender requirements')
-    if snapshot.get('language_issue'):
-        st.warning(snapshot['language_issue'])
+    sources = snapshot.get('sources', {})
     if snapshot.get('internal_planning'):
         with st.expander('Internal planning · verify assumptions before committing'):
             for item in snapshot['internal_planning']:
                 st.caption(item['file'])
                 st.text(item['text'] or item['issue'])
-    with st.expander('Tender brief', expanded=True):
+    with st.expander('Tender brief'):
         for label, item in snapshot.get('facts', {}).items():
             st.write(f"**{label.capitalize()}** · {item['value']}")
-            citations(item['citations'], snapshot.get('sources', {}))
+            citations(item['citations'], sources)
             for alternative in item.get('alternatives', []):
                 st.write(alternative['value'])
-                citations(alternative['citations'], snapshot.get('sources', {}))
+                citations(alternative['citations'], sources)
     gaps = snapshot.get('reading_gaps', [])
     with st.expander(f'Reading status · {len(gaps)} gaps'):
         st.dataframe(snapshot.get('manifest', []), hide_index=True)
-        for gap in gaps:
-            signature = fingerprint({k: v for k, v in gap.items() if k != 'resolution'})
-            st.warning(f"{gap['file']} · {gap['detail']}")
+        if gaps:
+            st.dataframe([{'File': gap['file'], 'Reading gap': gap['detail'],
+                           'Resolution': gap.get('resolution') or ''} for gap in gaps], hide_index=True)
+            by_signature = {fingerprint({k: v for k, v in gap.items() if k != 'resolution'}): gap for gap in gaps}
+            signature = st.selectbox('Reading gap to review', list(by_signature),
+                                     format_func=lambda key: f"{by_signature[key]['file']} · {by_signature[key]['detail']}")
+            gap = by_signature[signature]
             with st.form('gap-' + signature):
                 note = st.text_input('Resolution and reviewer', value=gap.get('resolution') or '')
                 if st.form_submit_button('Record resolution', **review_action(project), disabled=locked):
@@ -253,17 +288,23 @@ def requirements_view(store, project, snapshot, locked):
                         snapshot.setdefault('gap_resolutions', {})[signature] = note.strip()
                         gap['resolution'] = note.strip()
                         save_edit(store, project, snapshot, 'render')
-    for conflict in snapshot.get('conflicts', []):
-        st.warning(conflict)
-    if snapshot.get('conflicts'):
-        with st.form('review-conflicts'):
-            note = st.text_area('Resolve listed conflicts with explanation and source references')
-            if st.form_submit_button('Record conflict review', **review_action(project), disabled=locked):
-                if note.strip():
-                    snapshot.setdefault('conflict_reviews', {})[fingerprint(snapshot['conflicts'])] = note.strip()
-                    save_edit(store, project, snapshot, 'render')
-                else:
-                    st.error('Enter the resolution before saving.')
+    conflicts = snapshot.get('conflicts', [])
+    language_issue = snapshot.get('language_issue')
+    if conflicts or language_issue:
+        with st.expander('Requirement issues'):
+            if language_issue:
+                st.text(language_issue)
+            if conflicts:
+                for conflict in conflicts:
+                    st.text(conflict)
+                with st.form('review-conflicts'):
+                    note = st.text_area('Resolve listed conflicts with explanation and source references')
+                    if st.form_submit_button('Record conflict review', **review_action(project), disabled=locked):
+                        if note.strip():
+                            snapshot.setdefault('conflict_reviews', {})[fingerprint(conflicts)] = note.strip()
+                            save_edit(store, project, snapshot, 'render')
+                        else:
+                            st.error('Enter the resolution before saving.')
     scope = st.radio('Scope', ('proposal', 'administrative', 'uncertain'), horizontal=True,
                      format_func={'proposal': 'Proposal', 'administrative': 'General and administrative',
                                   'uncertain': 'Uncertain'}.get)
@@ -271,20 +312,33 @@ def requirements_view(store, project, snapshot, locked):
     visible = [r for r in snapshot.get('criteria', []) if r['scope'] == scope and
                (not filters or r['obligation'] in filters)]
     if visible:
-        selected = st.selectbox('Requirement to inspect', visible, format_func=lambda r: r['text'])
+        st.dataframe([
+            {'Requirement ID': row['id'], 'Requirement': row['text'],
+             'Obligation': row['obligation'], 'Response': row['response'], 'Chapter': row['chapter'],
+             'Exact conditions': ' | '.join(row.get('conditions', [])),
+             'Tender sources': source_locations(row['citations'], sources)}
+            for row in visible
+        ], hide_index=True, column_config={
+            'Requirement': st.column_config.TextColumn(width=360),
+            'Exact conditions': st.column_config.TextColumn(width=230),
+            'Tender sources': st.column_config.TextColumn(width=260),
+        })
+        selected = st.selectbox('Requirement to inspect', visible,
+                                format_func=lambda row: f"{row['text']} · {row['id']}")
         st.caption(f"{selected['id']} · {selected['obligation']} · {selected['response']} · "
                    f"{selected.get('duplicates', 0)} merged repeats")
-        citations(selected['citations'], snapshot.get('sources', {}))
+        with st.expander('Tender sources'):
+            citations(selected['citations'], sources)
         if selected.get('superseded'):
             with st.expander('Explicitly superseded clauses'):
                 for old in selected['superseded']:
                     st.write(old['conditions'])
-                    citations(old['citations'], snapshot.get('sources', {}))
+                    citations(old['citations'], sources)
         if selected.get('merged'):
             with st.expander('Equivalent wording from other sources'):
                 for duplicate in selected['merged']:
                     st.write(duplicate['text'])
-                    citations(duplicate['citations'], snapshot.get('sources', {}))
+                    citations(duplicate['citations'], sources)
         edit_criterion(store, project, snapshot, selected, locked)
     else:
         st.info('No criteria in this view.')
@@ -298,20 +352,36 @@ def requirements_view(store, project, snapshot, locked):
 def evidence_view(store, project, snapshot, locked):
     st.header('Evidence')
     assessments = effective_assessments(snapshot)
+    sources = snapshot.get('evidence_sources', {})
     rows = [row for row in snapshot.get('criteria', []) if eligible(row)]
-    choices = {row['id']: f"{row['chapter']} · {row['text']} · "
-               f"{assessments.get(row['id'], {}).get('status', 'awaiting assessment')}" for row in rows}
-    if choices:
+    if rows:
+        summary, choices = [], {}
+        for row in rows:
+            rid = row['id']
+            item = assessments.get(rid, {})
+            status = item.get('status', 'awaiting assessment')
+            summary.append({
+                'Requirement ID': rid, 'Proof criterion': row['text'], 'Assessment': status,
+                'Supporting sources': source_locations(item.get('citations', []), sources),
+                'Reasoning': item.get('reason', ''),
+            })
+            choices[rid] = f"{row['chapter']} · {row['text']} · {status} · {rid}"
+        st.dataframe(summary, hide_index=True, column_config={
+            'Proof criterion': st.column_config.TextColumn(width=360),
+            'Supporting sources': st.column_config.TextColumn(width=260),
+            'Reasoning': st.column_config.TextColumn(width=300),
+        })
         key = st.selectbox('Proof criterion', list(choices), format_func=choices.get)
         item = assessments.get(key, {})
         criterion = next(row for row in rows if row['id'] == key)
         manual = snapshot.get('evidence_edits', {}).get(key)
-        if manual and not applicable_review(manual, criterion, snapshot.get('evidence_sources', {})):
-            st.warning('The previous manual assessment needs reconfirmation for the current requirement or source.')
-            st.caption(manual['reason'])
-        sources = snapshot.get('evidence_sources', {})
+        if manual and not applicable_review(manual, criterion, sources):
+            with st.expander('Previous assessment needs reconfirmation'):
+                st.text(manual['reason'])
         st.write(item.get('reason', 'Prepare the project to assess this criterion.'))
-        citations(item.get('citations', []), sources)
+        if item.get('citations'):
+            with st.expander('Supporting passages'):
+                citations(item['citations'], sources)
         if item.get('rejected'):
             with st.expander('Rejected candidates'):
                 citations(item['rejected'], sources)
@@ -352,11 +422,13 @@ def evidence_view(store, project, snapshot, locked):
     st.write(match['name'] if match else 'Local triage')
     if reviewer.get('tied'):
         st.caption('Candidates tied on core criteria and role suitability.')
-    if reviewer.get('candidates'):
-        for candidate in reviewer['candidates']:
-            with st.expander(candidate['name'] + ' · ' + candidate['role']):
-                st.dataframe(candidate['reasons'], hide_index=True)
-                citations(candidate['citations'], snapshot.get('evidence_sources', {}))
+    candidates = reviewer.get('candidates', [])
+    if candidates:
+        with st.expander(f'Reviewer candidates ({len(candidates)})'):
+            candidate = st.selectbox('Candidate to inspect', candidates,
+                                     format_func=lambda item: f"{item['name']} · {item['role']}")
+            st.dataframe(candidate['reasons'], hide_index=True)
+            citations(candidate['citations'], sources)
     with st.form('reviewer-override'):
         reviewer_name = st.text_input('Reviewer override', value=snapshot.get('reviewer_override') or '')
         if st.form_submit_button('Save reviewer', **review_action(project), disabled=locked):
@@ -386,19 +458,39 @@ def proposal_view(store, project, snapshot, locked):
     if not chapters:
         st.info('Prepare proposals to build the editable slide plan.')
         return
+    source_pool = snapshot.get('sources', {}) | snapshot.get('evidence_sources', {})
+    slide_rows = [
+        {'Slide group': group['title'], 'Slide text': claim['text'],
+         'Claim type': 'manually reviewed' if claim['kind'] == 'manual' else claim['kind'],
+         'Needs review': claim['kind'] != 'manual' and bool(claim['kind'] == 'open' or claim.get('review_issues')),
+         'Role': group['role'], 'Requirement IDs': ', '.join(claim['requirements']),
+         'Claim sources': source_locations(claim['sources'], source_pool)}
+        for group in chapters for claim in group['claims']
+    ]
+    if slide_rows:
+        st.dataframe(slide_rows, hide_index=True, column_config={
+            'Slide group': st.column_config.TextColumn(width=190),
+            'Slide text': st.column_config.TextColumn(width=360),
+            'Requirement IDs': st.column_config.TextColumn(width=220),
+            'Claim sources': st.column_config.TextColumn(width=260),
+        })
     outline, editor = st.columns([1, 3])
     with outline:
         group_id = st.radio('Slide groups', [g['id'] for g in chapters],
                             format_func={g['id']: g['title'] for g in chapters}.get)
     group = next(g for g in chapters if g['id'] == group_id)
-    source_pool = snapshot.get('sources', {}) | snapshot.get('evidence_sources', {})
     criterion_map = {row['id']: row for row in snapshot.get('criteria', [])}
     with editor:
         with st.form('slide-' + group_id):
             new_title = st.text_input('Slide title', group['title'], max_chars=90)
             claims = []
             for i, existing in enumerate(group['claims']):
-                st.caption(' · '.join(existing['requirements']))
+                claim_label = ' · '.join(existing['requirements'])
+                needs_review = existing['kind'] != 'manual' and (existing['kind'] == 'open' or existing.get('review_issues'))
+                if needs_review:
+                    st.caption(f'Needs review · {claim_label}' if claim_label else 'Needs review')
+                elif claim_label:
+                    st.caption(claim_label)
                 text = st.text_area('Slide text', existing['text'], max_chars=230, key=f'{group_id}-claim-{i}')
                 resolved = st.checkbox('Confirmed wording and support reviewed', key=f'{group_id}-confirm-{i}',
                                        value=existing['kind'] == 'manual')
@@ -453,11 +545,12 @@ def proposal_view(store, project, snapshot, locked):
             snapshot.setdefault('chapter_edits', {}).pop(group_id, None)
             snapshot['refresh_group'] = {'id': group_id, 'version': uuid4().hex}
             save_edit(store, project, snapshot, 'upstream')
-        for claim in group['claims']:
-            if claim['kind'] == 'open':
-                st.warning(claim['text'])
-            with st.expander('Claim sources · ' + ', '.join(claim['requirements'])):
-                citations(claim['sources'], snapshot.get('sources', {}) | snapshot.get('evidence_sources', {}))
+        cited_claims = {i: claim for i, claim in enumerate(group['claims'], start=1) if claim['sources']}
+        if cited_claims:
+            with st.expander(f'Claim sources ({len(cited_claims)})'):
+                claim_number = st.selectbox('Slide text to inspect', list(cited_claims), key=f'{group_id}-claim-source',
+                                            format_func=lambda number: f"{number}. {cited_claims[number]['text']}")
+                citations(cited_claims[claim_number]['sources'], source_pool)
         inactive = set(snapshot.get('chapter_edits', {})) - {g['id'] for g in chapters}
         if inactive:
             with st.expander('Saved edits from earlier slide groups'):
@@ -467,27 +560,75 @@ def proposal_view(store, project, snapshot, locked):
                     st.write([claim['text'] for claim in item['claims']])
 
 
+def show_open_issues(issues, requirements):
+    if not issues:
+        return
+
+    def readable(text):
+        return re.sub(r'\b[RH]-[0-9a-f]{20}\b',
+                      lambda match: requirements.get(match[0], 'requirement wording unavailable'), text)
+
+    rows = []
+    for message, count in Counter(issues).items():
+        reference, has_context, detail = message.partition(' · ')
+        rid = reference.removeprefix('Evidence ')
+        rows.append({
+            'Issue': readable(detail if has_context else message),
+            'Requirement or source': requirements.get(rid, readable(reference)) if has_context else '',
+            'Occurrences': count,
+        })
+    with st.expander(f'Open issues ({len(issues)})'):
+        st.caption('Reviewers can resolve these issues or approve the draft as it is.')
+        st.dataframe(rows, hide_index=True, height='auto', column_config={
+            'Issue': st.column_config.TextColumn(width=380),
+            'Requirement or source': st.column_config.TextColumn(width=320),
+            'Occurrences': None if all(row['Occurrences'] == 1 for row in rows) else st.column_config.NumberColumn(),
+        })
+
+
 def final_view(store, project, snapshot, locked):
     st.header('Final review')
     key = project['id']
     name = snapshot.get('reviewer_override') or (snapshot.get('reviewer', {}).get('match') or {}).get('name', 'Local triage')
     st.write(f'Reviewer · {name}')
-    for notice in statuses(store, key)[:1]:
-        st.caption(f"Notification · {notice['state']} · {notice['attempts']} attempts")
+    notice = next(iter(statuses(store, key)), None)
+    if notice:
+        label = {
+            'failed': 'Review email could not be sent',
+            'retry': 'Review email will retry',
+            'uncertain': 'Review email delivery is unconfirmed',
+        }.get(notice['state'], f"Review email · {notice['state']}")
         if notice['diagnostic']:
-            st.warning(notice['diagnostic'])
-    for issue in blockers(snapshot):
-        st.warning(issue)
+            with st.expander(label):
+                st.caption(f"Delivery attempts · {notice['attempts']}")
+                st.text(notice['diagnostic'])
+        else:
+            st.caption(label)
+    issues = review_issues(snapshot)
+    criteria = snapshot.get('criteria', [])
+    requirements = {rid: row['text'] for rid, row in snapshot.get('criterion_removals', {}).items()}
+    requirements.update({rid: row['text'] for rid, row in snapshot.get('criterion_edits', {}).items() if row})
+    requirements.update({row['id']: row['text'] for row in criteria})
+    show_open_issues(issues, requirements)
     if snapshot.get('knowledge_gaps'):
         with st.expander('Unavailable knowledge sources'):
             st.dataframe(snapshot['knowledge_gaps'], hide_index=True)
     for tab, label in (('requirements', 'Review requirements'), ('evidence', 'Check evidence'), ('proposal', 'Edit slides')):
         st.button(label, key='fix-' + tab,
                   on_click=lambda target=tab: st.query_params.from_dict({'project': key, 'tab': target}))
-    if snapshot.get('coverage'):
+    chapters = snapshot.get('chapters', [])
+    coverage_rows = (list(coverage(criteria, chapters, effective_assessments(snapshot))) if 'criteria' in snapshot
+                     else snapshot.get('coverage', []))
+    if coverage_rows:
+        titles = {group['id']: group['title'] for group in chapters}
         with st.expander('Requirement coverage'):
-            st.dataframe([dict(criterion=r['criterion'], chapters=', '.join(x['group'] for x in r['chapters']),
-                               issue=r['issue'], blocker=r['blocker']) for r in snapshot['coverage']], hide_index=True)
+            st.dataframe([
+                {'Requirement': requirements.get(row['criterion'], 'Requirement wording unavailable'),
+                 'Slide groups': ', '.join(dict.fromkeys(titles.get(link['group'], 'Slide group unavailable')
+                                                        for link in row['chapters'])),
+                 'Issue': row['issue']}
+                for row in coverage_rows
+            ], hide_index=True, column_config={'Requirement': st.column_config.TextColumn(width=420)})
     active_bytes = project['deck']
     if active_bytes:
         st.caption('SHA-256 · ' + project['checksum'])
@@ -504,7 +645,7 @@ def final_view(store, project, snapshot, locked):
                 st.download_button('Download PDF preview', data, file_name='Proposal-preview.pdf', mime='application/pdf')
             else:
                 st.info('Local preview unavailable. Download the draft and open it in PowerPoint.')
-        if not blockers(snapshot) and not locked:
+        if not locked:
             with st.form('final-approval'):
                 reviewer = st.text_input('Approval reviewer', '' if name == 'Local triage' else name)
                 if st.form_submit_button('Approve current checksum', **review_action(project), disabled=bool(project['approval'])):
@@ -531,12 +672,23 @@ def final_view(store, project, snapshot, locked):
     if st.button('Regenerate from saved slides', **review_action(project), disabled=locked or not snapshot.get('content_key')
                  or snapshot.get('dirty') == 'upstream'):
         store.enqueue([key], 'render')
-        st.rerun()
+        location(key)
     with st.expander('Revision history'):
         st.dataframe(store.history(key), hide_index=True)
         usage = store.metrics(key)
         st.caption(f"{usage['calls']} model calls · {usage['input']:,} measured input tokens · "
                    f"{usage['output']:,} output tokens · {usage['thinking']:,} thinking tokens")
+
+
+def review_tabs(project):
+    snapshot = project['snapshot']
+    if project['deck'] or snapshot.get('content_key'):
+        return list(TABS)
+    if 'chapters' in snapshot:
+        return ['requirements', 'evidence', 'proposal']
+    if 'evidence' in snapshot:
+        return ['requirements', 'evidence']
+    return ['requirements']
 
 
 def run():
@@ -553,6 +705,9 @@ def run():
         if st.button('Back to projects'):
             location()
         return
+    row = jobs_table(store, [key])[0]
+    if row['revision'] != project['revision']:
+        st.rerun()
     submitted = st.session_state.pop('submitted_review', None)
     if submitted is not None and submitted != (key, project['revision'], project['checksum']):
         st.session_state['review_conflict'] = 'The project changed since you opened this view. Review the current revision and try again.'
@@ -560,24 +715,37 @@ def run():
     if message := st.session_state.pop('review_conflict', None):
         st.error(message)
     snapshot = project['snapshot']
-    tab = st.query_params.get('tab', 'review')
-    if tab not in TABS:
-        tab = 'review'
     if st.sidebar.button('Projects'):
         location()
-    selected = st.sidebar.radio('Stage', list(TABS), index=list(TABS).index(tab),
-                                format_func=TABS.get, key='stage-' + key + '-' + tab)
-    if selected != tab:
-        location(key, selected)
+    busy = row['status'] in ACTIVE_JOB_STATUSES
+    tabs = [row['workflow_stage']] if busy else review_tabs(project)
+    tab = st.query_params.get('tab')
+    if tab not in tabs:
+        tab = tabs[-1]
+    if len(tabs) == 1:
+        st.sidebar.caption('Stage')
+        st.sidebar.markdown(f'**{TABS[tab]}**')
+    else:
+        selected = st.sidebar.radio('Stage', tabs, index=tabs.index(tab),
+                                    format_func=TABS.get, key='stage-' + key + '-' + tab)
+        if selected != tab:
+            location(key, selected)
     st.title(Path(project['folder']).name)
     st.caption(f"{project['phase']} · Revision {project['revision']}")
-    row = jobs_table(store, [key])[0]
-    busy = row['status'] in ('queued', 'running')
-    label = ('Resume preparation' if row['status'] in ('failed', 'partial') else
+    label = ('Resume preparation' if row['status'] in ('failed', 'partial', 'stopped') else
              'Prepare proposals' if not project['deck'] else 'Check for input changes')
     if st.sidebar.button(label, type='primary', disabled=busy):
-        store.enqueue([key])
-        st.rerun()
-    status_view(store, key, row['status'])
+        store.enqueue([key], row['job_action'] if row['status'] == 'stopped' else 'reuse')
+        location(key)
+    if busy:
+        st.header(TABS[tab])
+        status_view(store, row)
+        return
+    status_view(store, row)
+    if not snapshot:
+        st.header(TABS[tab])
+        if row['status'] is None:
+            st.info('Prepare proposals to extract the tender requirements.')
+        return
     views = dict(requirements=requirements_view, evidence=evidence_view, proposal=proposal_view, review=final_view)
     views[tab](store, project, snapshot, busy)

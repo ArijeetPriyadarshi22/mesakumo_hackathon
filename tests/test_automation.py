@@ -4,6 +4,7 @@ import json
 import os
 import smtplib
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -14,12 +15,12 @@ from zipfile import ZipFile
 
 from pypdf import PdfWriter
 
-from mesakumo.automation import approve_current, run_once
+from mesakumo.automation import approve_current, approved_download, run_once
 from mesakumo.automation_deck import NS, SLOTS, TEMPLATE_SHA256, render, xml
 from mesakumo.automation_evidence import Assessments, eligible, match, suggest_reviewer
 from mesakumo.automation_mail import dispatch, statuses
 from mesakumo.automation_model import ModelCalls
-from mesakumo.automation_proposal import check_claims
+from mesakumo.automation_proposal import review_claims, review_issues
 from mesakumo.automation_requirements import Reclassification, consolidate, merge_paraphrases, parse_grounded
 from mesakumo.automation_store import AutomationStore, discover
 from mesakumo.discovery import ROOT
@@ -95,6 +96,43 @@ class WorkflowTests(unittest.TestCase):
         self.store = AutomationStore(self.base / 'workspace.sqlite3')
         self.key, = self.store.register(self.root)
 
+    def test_draft_renders_model_wording_with_citation_issues(self):
+        from synthetic_template import template_bytes
+
+        class DraftModel(FixtureModel):
+            def complete_task(self, prompt, *, schema_name, **kwargs):
+                result = super().complete_task(prompt, schema_name=schema_name, **kwargs)
+                if schema_name != 'Chapter':
+                    return result
+                self.context = json.loads(prompt[prompt.index('{'):])['additional_context']
+                chapter = json.loads(result)
+                chapter['claims'][0]['sources'] = ['invalid-citation']
+                return json.dumps(chapter)
+
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
+        (self.root / 'experience.txt').write_text('Two workshop delivery references')
+        inventory = {'experience.txt': EvidenceSource('experience.txt', 'experience.txt', 'Previous project sources')}
+        model = DraftModel()
+        self.store.enqueue([self.key])
+        with patch.dict(os.environ, {'MESAKUMO_RPM': '100'}), patch(
+            'mesakumo.automation.evidence_inventory', return_value=inventory
+        ):
+            self.assertTrue(run_once(self.store, lambda: model))
+        project = self.store.project(self.key)
+        self.assertEqual(self.store.projects()[0]['status'], 'ready')
+        self.assertTrue(any(item['file'] == 'experience.txt' for item in model.context.values()))
+        self.assertFalse(project['snapshot']['generation_gaps'])
+        claim = project['snapshot']['chapters'][0]['claims'][0]
+        self.assertFalse(claim['sources'])
+        self.assertTrue(any('unrelated citations' in issue for issue in review_issues(project['snapshot'])))
+        with ZipFile(io.BytesIO(project['deck'])) as pptx:
+            slide = xml(pptx.read('ppt/slides/proposal2.xml'))
+            text = ' '.join(slide.xpath('.//a:t/text()', namespaces=NS))
+        self.assertIn(claim['text'], text)
+        self.assertNotIn('⚠', text)
+        claim['kind'] = 'manual'
+        self.assertFalse(any('unrelated citations' in issue for issue in review_issues(project['snapshot'])))
+
     def test_phase_discovery_persistence_and_concurrent_claim(self):
         other = self.base / 'other'
         (other / self.pack.name).mkdir(parents=True)
@@ -119,6 +157,96 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(reopened.cached(claim[0], 'example', 'done'), {'data': True})
         with self.assertRaisesRegex(ValueError, 'lease'):
             self.store.progress(claim[0], claim[2], 'expired')
+
+    def test_stop_running_job_preserves_draft_and_reuses_completed_work(self):
+        from synthetic_template import template_bytes
+
+        class PausedModel(FixtureModel):
+            def complete_task(self, prompt, *, schema_name, **kwargs):
+                if schema_name == 'Chapter':
+                    entered.set()
+                    if not released.wait(10):
+                        raise TimeoutError('Test model was not released.')
+                return super().complete_task(prompt, schema_name=schema_name, **kwargs)
+
+        entered, released = threading.Event(), threading.Event()
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
+        self.store.save_revision(self.key, 0, {'project_name': self.pack.name}, 'old', b'Saved draft')
+        self.store.enqueue([self.key], 'update')
+        job = self.store.projects()[0]
+        restarted = AutomationStore(self.store.path)
+        with patch.dict(os.environ, {'MESAKUMO_RPM': '100'}), patch(
+            'mesakumo.automation.evidence_inventory', return_value={}
+        ), ThreadPoolExecutor(1) as pool:
+            model = PausedModel()
+            worker = pool.submit(run_once, self.store, lambda: model)
+            try:
+                self.assertTrue(entered.wait(10))
+                restarted.request_stop([(self.key, job['request_id'])])
+                restarted.enqueue([self.key], 'render')
+                self.assertEqual(restarted.projects()[0]['status'], 'stopping')
+                self.assertIsNone(restarted.claim())
+            finally:
+                released.set()
+            self.assertTrue(worker.result(timeout=10))
+            stopped = restarted.project(self.key)
+            self.assertEqual(stopped['revision'], 1)
+            self.assertEqual(stopped['deck'], b'Saved draft')
+            self.assertEqual(restarted.projects()[0]['status'], 'stopped')
+            self.assertEqual(statuses(restarted, self.key), [])
+
+            started_calls = model.count
+            restarted.enqueue([self.key], 'update')
+            restarted.request_stop([(self.key, job['request_id'])])
+            self.assertEqual(restarted.projects()[0]['status'], 'queued')
+            self.assertTrue(run_once(restarted, lambda: model))
+            self.assertEqual(model.count - started_calls, 1)
+            self.assertEqual(restarted.projects()[0]['status'], 'ready')
+
+    def test_expired_stopping_job_is_not_reclaimed(self):
+        self.store.enqueue([self.key])
+        _, _, token = self.store.claim()
+        self.store.request_stop([(self.key, self.store.projects()[0]['request_id'])])
+        with self.store.write() as db:
+            db.execute('UPDATE jobs SET lease_until=0 WHERE project=?', (self.key,))
+        self.assertIsNone(self.store.claim())
+        self.assertEqual(self.store.projects()[0]['status'], 'stopped')
+        with self.assertRaisesRegex(ValueError, 'lease'):
+            self.store.progress(self.key, token, 'expired')
+
+    def test_stop_controls_on_projects_and_project_status(self):
+        from streamlit.testing.v1 import AppTest
+
+        (self.root / 'Ausschreibung 3').mkdir()
+        other = next(key for key in self.store.register(self.root) if key != self.key)
+        self.store.set_setting('input_root', str(self.root))
+        self.store.enqueue([self.key, other], 'update')
+
+        def button(app, label):
+            return next(widget for widget in app.button if widget.label == label)
+
+        with patch.dict(os.environ, {'MESAKUMO_AUTOMATION_DIR': str(self.base)}), patch('mesakumo.ui.automation.start_worker'):
+            projects = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py')).run()
+            projects.checkbox[0].uncheck().run()
+            projects.multiselect[0].set_value([self.key]).run()
+            button(projects, 'Stop selected jobs').click().run()
+            self.assertFalse(projects.exception)
+            self.assertEqual({row['id']: row['status'] for row in self.store.projects()},
+                             {self.key: 'stopped', other: 'queued'})
+            button(projects, 'Stop job').click().run()
+            self.assertFalse(projects.exception)
+            self.assertIsNone(self.store.claim())
+
+            project = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py'))
+            project.query_params = {'project': self.key, 'tab': 'proposal'}
+            project.run()
+            button(project, 'Resume preparation').click().run()
+            current = next(row for row in self.store.projects() if row['id'] == self.key)
+            self.assertEqual((current['status'], current['job_action']), ('queued', 'update'))
+            button(project, 'Stop job').click().run()
+            self.assertFalse(project.exception)
+            self.assertIsNone(self.store.claim())
+            self.assertTrue(any('Stopped.' in item.value for item in project.info))
 
     def test_checkpoint_reuse_final_approval_edit_and_outbox(self):
         from synthetic_template import template_bytes
@@ -156,8 +284,9 @@ class WorkflowTests(unittest.TestCase):
             self.assertFalse(dispatch(restarted, capture, triage='triage@example.test', sender='local@example.test'))
             self.assertIn(f'?project={self.key}&tab=review', deliveries[0][0]['url'])
             self.assertEqual(deliveries[0][0]['reviewer'], 'Local triage')
-            with self.assertRaisesRegex(ValueError, 'blockers'):
-                approve_current(restarted, first, 'Alex')
+            self.assertTrue(review_issues(first['snapshot']))
+            self.assertEqual(approve_current(restarted, first, 'Alex')['checksum'], first['checksum'])
+            self.assertEqual(approved_download(restarted, restarted.project(self.key)), first['deck'])
             restarted.enqueue([self.key])
             run_once(restarted, lambda: self.fail('Warm run should not configure the model.'))
             self.assertEqual(restarted.project(self.key)['revision'], first['revision'])
@@ -201,6 +330,8 @@ class WorkflowTests(unittest.TestCase):
     def test_review_link_reopens_in_two_streamlit_sessions(self):
         from streamlit.testing.v1 import AppTest
 
+        self.store.save_revision(self.key, 0, {'project_name': self.pack.name}, 'inputs', b'Saved draft')
+
         def connect():
             app = AppTest.from_file(str(ROOT / 'mesakumo' / 'streamlit_app.py'))
             app.query_params = {'project': self.key, 'tab': 'review'}
@@ -216,6 +347,48 @@ class WorkflowTests(unittest.TestCase):
             first.query_params['project'] = 'unknown'
             first.run()
             self.assertIn('was not found', first.error[0].value)
+
+    def test_project_follows_only_the_running_stage_until_draft_is_ready(self):
+        from streamlit.testing.v1 import AppTest
+        from synthetic_template import template_bytes
+
+        (self.root / 'Angebotstemplate.pptx').write_bytes(template_bytes(self))
+        app = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py'))
+        app.query_params = {'project': self.key, 'tab': 'review'}
+        screens = []
+
+        def record_screen():
+            app.run()
+            screens.append(([item.value for item in app.header], bool(app.sidebar.radio),
+                            bool(app.exception), any(item.label == 'Stop job' for item in app.button)))
+
+        progress = self.store.progress
+
+        def track_stage(key, token, stage, done=0, total=0, *, workflow_stage=None):
+            progress(key, token, stage, done, total, workflow_stage=workflow_stage)
+            if workflow_stage == 'evidence':
+                progress(key, token, 'Waiting for model quota')
+            if workflow_stage or stage == 'Extracting criteria':
+                record_screen()
+
+        environment = {'MESAKUMO_AUTOMATION_DIR': str(self.base), 'MESAKUMO_RPM': '100'}
+        with patch.dict(os.environ, environment), patch('mesakumo.ui.automation.start_worker'), patch(
+            'mesakumo.automation.evidence_inventory', return_value={}
+        ), patch.object(self.store, 'progress', side_effect=track_stage):
+            record_screen()
+            self.assertEqual(screens.pop(), (['Tender requirements'], False, False, False))
+            self.store.enqueue([self.key])
+            self.assertTrue(run_once(self.store, FixtureModel))
+            self.assertEqual(screens, [([stage], False, False, True) for stage in
+                                      ('Tender requirements', 'Evidence', 'Proposal', 'Final review')])
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.header[0].value, 'Final review')
+            self.assertEqual(app.sidebar.radio[0].options,
+                             ['Tender requirements', 'Evidence', 'Proposal', 'Final review'])
+            app.sidebar.radio[0].set_value('requirements').run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.header[0].value, 'Tender requirements')
 
     def test_projects_to_review_link_edit_regenerate_and_approve_in_streamlit(self):
         from streamlit.testing.v1 import AppTest
@@ -262,9 +435,16 @@ class WorkflowTests(unittest.TestCase):
             run_once(self.store, FixtureModel)
 
             editor = app_session('proposal')
+            claims_table = editor.dataframe[0].value
+            self.assertEqual(set(claims_table['Claim type']), {'proposal', 'source fact'})
+            proof = claims_table.loc[claims_table['Claim type'] == 'source fact'].iloc[0]
+            self.assertEqual(proof['Slide text'], 'Two workshop delivery references')
+            self.assertTrue(proof['Requirement IDs'])
+            self.assertIn('experience.txt', proof['Claim sources'])
             next(item for item in editor.text_input if item.label == 'Slide title').set_value('Updated workshop plan')
             button(editor, 'Save slide group').click().run()
             self.assertFalse(editor.exception)
+            self.assertEqual(set(editor.dataframe[0].value['Slide group']), {'Updated workshop plan'})
             review = app_session('review')
             button(review, 'Regenerate from saved slides').click().run()
             run_once(self.store, lambda: self.fail('Text-only regeneration cannot call the model.'))
@@ -279,7 +459,6 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(current['approval']['checksum'], current['checksum'])
             button(review, 'Verify approved download').click().run()
             self.assertIn('Download approved PowerPoint', [b.label for b in review.get('download_button')])
-            from mesakumo.automation import approved_download
             self.assertEqual(approved_download(self.store, current), current['deck'])
             (self.pack / 'scope.txt').write_text('Changed tender.', encoding='utf-8')
             button(review, 'Verify approved download').click().run()
@@ -399,14 +578,32 @@ class ValidationTests(unittest.TestCase):
         row['text'] = 'Database migration and platform rollout'
         self.assertIsNone(suggest_reviewer(candidates, [row], index)['match'])
 
-    def test_invalid_and_unsupported_claims(self):
-        inputs = {'R1': dict(response='proof', citations=['S1'], evidence_ids=['S1'])}
+    def test_invalid_and_unsupported_claims_remain_editable(self):
+        inputs = {'R1': dict(text='Supply a project reference', response='proof', citations=['S1'], evidence_ids=['S1'])}
         excerpts = {'S1': 'Actual reference text.'}
         base = dict(text='Invented certification', kind='source fact', requirements=['R1'], sources=['S1'])
-        for claim, diagnostic in ((base, 'verbatim'), (dict(base, sources=['S404']), 'unknown'),
-                                   (dict(base, kind='proposal'), 'criteria requiring proof')):
-            with self.subTest(claim=claim), self.assertRaisesRegex(ValueError, diagnostic):
-                check_claims({'claims': [claim]}, inputs, excerpts)
+        for claim, diagnostic in ((base, 'supports this factual wording'),
+                                   (dict(base, sources=['S404']), 'unrelated citations'),
+                                   (dict(base, kind='proposal'), 'required proof')):
+            with self.subTest(claim=claim):
+                draft = review_claims(dict(title='References', claims=[claim]), inputs, excerpts, 'Portfolio')
+                saved, = draft['claims']
+                self.assertEqual(saved['text'], base['text'])
+                self.assertTrue(any(diagnostic in issue for issue in saved['review_issues']))
+
+    def test_long_draft_is_split_and_omitted_requirement_keeps_its_wording(self):
+        inputs = {'R1': dict(text='Describe the approach', response='method', citations=[]),
+                  'R2': dict(text='Describe the deliverables', response='method', citations=[])}
+        text = ' '.join(['We will co-design workshop activities with participants.'] * 6)
+        result = review_claims(dict(title='', claims=[
+            dict(text=text, kind='proposal', requirements=['R1'], sources=[]),
+        ]), inputs, {}, 'Approach')
+        *generated, fallback = result['claims']
+        self.assertEqual(result['title'], 'Approach')
+        self.assertEqual(' '.join(item['text'] for item in generated), text)
+        self.assertTrue(all(len(item['text']) <= 230 for item in generated))
+        self.assertEqual((fallback['text'], fallback['kind'], fallback['requirements']),
+                         ('Describe the deliverables', 'open', ['R2']))
 
     def test_pdf_retains_readable_pages_and_reports_other_pages(self):
         from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject

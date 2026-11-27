@@ -1,14 +1,13 @@
-"""Template chapter drafts with bounded content and validated claim references."""
+"""Draft slide groups and track items that need reviewer confirmation."""
 import re
+import textwrap
 from typing import Literal
-
-from pydantic import Field
 
 from .automation_evidence import effective_assessments, proof_span
 from .automation_requirements import CHAPTERS, Structured
 from .automation_store import canonical, fingerprint
 
-PLAN_VERSION = 'slide-groups-3'
+PLAN_VERSION = 'slide-groups-4'
 TITLES = {
     'de': ('Ausgangslage', 'Vorgehensweise', 'Ergebnisse', 'Mitwirkung',
            'Zeitplan', 'Projektteam', 'Angebot und Preise', 'Anlagen'),
@@ -18,15 +17,15 @@ TITLES = {
 
 
 class Claim(Structured):
-    text: str = Field(min_length=1, max_length=230)
+    text: str
     kind: Literal['proposal', 'source fact', 'open']
-    requirements: list[str] = Field(min_length=1)
+    requirements: list[str]
     sources: list[str]
 
 
 class Chapter(Structured):
-    title: str = Field(min_length=1, max_length=90)
-    claims: list[Claim] = Field(min_length=1, max_length=16)
+    title: str
+    claims: list[Claim]
 
 
 def is_proposal(row):
@@ -67,66 +66,90 @@ def plan_context(rows, sources, evidence, assessments):
     return inputs, citations
 
 
+def supplemental_context(rows, index, assessments):
+    context = {}
+    for row in rows:
+        query = ' '.join([row['text'], *row['conditions']])
+        assessed = set(assessments.get(row['id'], {}).get('citations', []))
+        for pid in index.search(query, limit=8):
+            source, passage = index.entries[pid]
+            if pid not in assessed and source.role in ('Previous project sources', 'Historical proposal'):
+                context[row['id']] = dict(file=source.filename, role=source.role,
+                                          excerpt=proof_span(row, passage.excerpt, limit=650))
+                break
+    return context
+
+
 def quote_supported(text, excerpt):
     excerpts = [excerpt] if isinstance(excerpt, str) else excerpt
     quote = ' '.join(text.split())
     return any(quote in ' '.join(span.split()) for span in excerpts)
 
 
-def check_claims(result, inputs, citations):
-    covered, open_rows = set(), set()
-    proof_links = {rid: set() for rid in inputs}
+def fallback_claims(inputs):
+    return [dict(text=part, kind='open', requirements=[rid], sources=[],
+                 review_issues=['Complete the draft response for this requirement.'])
+            for rid, row in inputs.items()
+            for part in textwrap.wrap(row['text'], width=230, break_on_hyphens=False)]
+
+
+def review_claims(result, inputs, citations, default_title):
+    claims, covered = [], set()
     for claim in result['claims']:
-        rows = set(claim['requirements'])
-        ids = set(claim['sources'])
-        if rows - inputs.keys() or ids - citations.keys():
-            raise ValueError('Proposal draft used an unknown requirement or source.')
-        for rid in rows:
-            if ids - set(inputs[rid]['citations']):
-                raise ValueError('Proposal draft used a source unrelated to the criterion.')
-        if claim['kind'] == 'source fact' and (not ids or not all(
-            quote_supported(claim['text'], citations[pid]) for pid in ids
-        )):
-            raise ValueError('Factual proposal claims require a verbatim source excerpt.')
-        if claim['kind'] == 'source fact' and any(
-            inputs[rid]['response'] == 'proof' and not ids <= set(inputs[rid]['evidence_ids']) for rid in rows
-        ):
-            raise ValueError('Proof claims require evidence citations.')
-        if claim['kind'] == 'source fact' and any(inputs[rid]['response'] == 'current_action' for rid in rows):
-            raise ValueError('Current actions need a reviewer confirmation.')
-        if claim['kind'] == 'proposal' and any(inputs[rid]['response'] != 'method' for rid in rows):
-            raise ValueError('Use cited source facts or mark a gap for criteria requiring proof or a current action.')
-        if claim['kind'] == 'proposal' and re.search(
-            r'\b(?:already|previously|confirmed|signed|verfügbar|unterzeichnet|garantiert|bereits|nachweislich)\b|[€$]',
-            claim['text'], re.IGNORECASE
-        ):
-            raise ValueError('A proposed method contains a factual or current commitment.')
+        text = ' '.join(claim['text'].split())
+        if not text:
+            continue
+        issues = []
+        rows = list(dict.fromkeys(rid for rid in claim['requirements'] if rid in inputs))
+        if not rows or set(claim['requirements']) - inputs.keys():
+            issues.append('Verify which tender requirements this wording addresses.')
+        sources = [pid for pid in dict.fromkeys(claim['sources']) if pid in citations and rows
+                   and all(pid in inputs[rid]['citations'] for rid in rows)]
+        if set(claim['sources']) - set(sources):
+            issues.append('Replace missing or unrelated citations with supporting sources.')
         if claim['kind'] == 'source fact':
-            for rid in rows:
-                proof_links[rid].update(ids)
+            if not sources or not all(quote_supported(text, citations[pid]) for pid in sources):
+                issues.append('Verify that the cited material supports this factual wording.')
+            if any(inputs[rid]['response'] == 'proof' and not set(sources) <= set(inputs[rid]['evidence_ids'])
+                   for rid in rows):
+                issues.append('Verify that proof claims cite assessed evidence.')
+            if any(inputs[rid]['response'] == 'current_action' for rid in rows):
+                issues.append('Confirm the action or commitment for this tender.')
+        if claim['kind'] == 'proposal':
+            if any(inputs[rid]['response'] != 'method' for rid in rows):
+                issues.append('Confirm any required proof or tender-specific action addressed by this wording.')
+            if re.search(
+                r'\b(?:already|previously|confirmed|signed|verfügbar|unterzeichnet|garantiert|bereits|nachweislich)\b|[€$]',
+                text, re.IGNORECASE
+            ):
+                issues.append('Check the factual or current commitments in this wording.')
         if claim['kind'] == 'open':
-            open_rows.update(rows)
+            issues.append('Verify this draft wording.')
+        for part in textwrap.wrap(text, width=230, break_on_hyphens=False):
+            item = dict(claim, text=part, requirements=rows, sources=sources)
+            if issues:
+                item['review_issues'] = issues
+            claims.append(item)
         covered.update(rows)
-    if covered != inputs.keys():
-        raise ValueError('Proposal draft omitted a criterion.')
-    for rid, row in inputs.items():
-        if (row.get('response') == 'proof' and row.get('evidence') == 'confirmed' and rid not in open_rows
-                and not set(row['evidence_ids']) <= proof_links[rid]):
-            raise ValueError('Proposal omitted confirmed proof. Cite all assessed passages or record an open issue.')
-    return result
+    missing = {rid: row for rid, row in inputs.items() if rid not in covered}
+    claims.extend(fallback_claims(missing))
+    title = ' '.join(result['title'].split()) or default_title
+    return dict(title=title[:90], claims=claims)
 
 
-def draft_chapter(call, role, language, inputs, citations):
+def draft_chapter(call, role, language, inputs, citations, context):
     prompt = f"""Draft an editable slide group for chapter {role}, in {language}.
-Cover every criterion. Group mutually related work-package steps into clear bullets.
-Use kind proposal only for future method; use source fact only for a short verbatim
-excerpt with its source ID. If price, timeline, staffing, signatures, capacity, partner commitments
-or proof are unconfirmed, use an open issue. Cite each assessed proof passage in a verbatim claim
-or record an open issue. Never treat historical tender commitments or
-buyer criteria as verified facts about the bidder. Mention sources only in the sources field.
-Keep bullets concise and slide-ready.
-""" + canonical(dict(criteria=inputs, excerpts=citations))
-    return check_claims(call(prompt, Chapter, max_tokens=3000), inputs, citations)
+Write useful slide-ready content for every criterion. Use the tender and assessed evidence, the
+historical examples supplied as additional context, and general professional knowledge to propose
+concrete methods and deliverables. Use kind proposal for future methods and source fact for sourced
+facts. Cite supporting passage IDs from excerpts. Use historical examples for inspiration; they do
+not establish delivery or current commitments. Retain useful draft wording as kind open when facts,
+dates, staffing, prices, signatures, partner commitments or proof need reviewer confirmation. State
+what could be proposed or confirmed without inventing specifics. Keep the title within 90 characters
+and each bullet within 230 characters.
+""" + canonical(dict(criteria=inputs, excerpts=citations, additional_context=context))
+    default_title = TITLES['en' if language == 'English' else 'de'][CHAPTERS.index(role)]
+    return review_claims(call(prompt, Chapter, max_tokens=3000), inputs, citations, default_title)
 
 
 def coverage(criteria, groups, assessments):
@@ -161,7 +184,7 @@ def coverage(criteria, groups, assessments):
                 reason = 'Confirm the tender-specific action.'
         elif item['response'] == 'current_action' and not item.get('resolution'):
             reason = 'Complete or confirm the administrative action.'
-        yield dict(criterion=rid, chapters=mapping[rid], issue=reason, blocker=bool(reason and needed))
+        yield dict(criterion=rid, chapters=mapping[rid], issue=reason, needs_review=bool(reason and needed))
 
 
 def field_key(group):
@@ -175,10 +198,11 @@ def confirm_fields(group, reviewer, basis):
     return dict(reviewer=reviewer, basis=basis, key=field_key(group))
 
 
-def blockers(snapshot):
+def review_issues(snapshot):
     current_coverage = coverage(snapshot.get('criteria', []), snapshot.get('chapters', []),
                                 effective_assessments(snapshot)) if 'criteria' in snapshot else snapshot.get('coverage', [])
-    messages = [item['criterion'] + ' · ' + item['issue'] for item in current_coverage if item['blocker']]
+    messages = [item['criterion'] + ' · ' + item['issue'] for item in current_coverage
+                if item.get('needs_review', item.get('blocker'))]
     if snapshot.get('language_issue'):
         messages.append(snapshot['language_issue'])
     messages.extend(g['file'] + ' · ' + g['detail'] for g in snapshot.get('reading_gaps', [])
@@ -192,6 +216,10 @@ def blockers(snapshot):
     available = snapshot.get('sources', {}).keys() | snapshot.get('evidence_sources', {}).keys()
     current = {row['id'] for row in snapshot.get('criteria', [])}
     for group in snapshot.get('chapters', []):
+        for claim in group['claims']:
+            if claim['kind'] != 'manual' and claim.get('review_issues'):
+                reference = ' / '.join(claim['requirements']) or group['title']
+                messages.extend(f"{reference} · {issue}" for issue in claim['review_issues'])
         field_review = group.get('field_review') or {}
         if group.get('fields') and (field_review.get('key') != field_key(group)
                                     or not field_review.get('reviewer') or not field_review.get('basis')):

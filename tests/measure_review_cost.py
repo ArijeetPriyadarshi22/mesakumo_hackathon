@@ -38,7 +38,7 @@ def main():
         with patch('mesakumo.automation.evidence_inventory', return_value=inventory):
             fingerprint = prepare_inputs(store.project(key), {}, store).key
         store.save_revision(key, 0, {}, fingerprint, b'test approved deck')
-        store.approve(key, 1, store.project(key)['checksum'], 'Fixture', template_hash=None, blockers=lambda _: [])
+        store.approve(key, 1, store.project(key)['checksum'], 'Fixture', template_hash=None)
         app = AppTest.from_file(str(ROOT / 'mesakumo' / 'streamlit_app.py'), default_timeout=30)
         app.query_params = {'project': key, 'tab': 'review'}
         real_read, real_digest = Path.read_bytes, hashlib.file_digest

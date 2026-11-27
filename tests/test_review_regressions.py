@@ -8,12 +8,140 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from mesakumo.automation_store import AutomationStore
+from mesakumo.automation_store import AutomationStore, fingerprint
 from mesakumo.discovery import ROOT
 from test_automation import criterion
 
 
 class ReviewActions(unittest.TestCase):
+    def test_final_review_can_approve_and_download_with_advisory_issues(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Ausschreibung 1').mkdir()
+            store = AutomationStore(root / 'workspace.sqlite3')
+            project, = store.register(root)
+            proof_id = 'R-' + 'a' * 20
+            criteria = [dict(criterion('File the signed form', 'T', scope='administrative',
+                                       response='current_action'), id='R1'),
+                        dict(criterion('Provide a project reference', 'T', response='proof'), id=proof_id)]
+            gap = dict(file='Chapter approach', detail='The provider returned an incomplete response.')
+            evidence_gap = dict(file=f'Evidence {proof_id}', detail='The assessment needs another attempt.')
+            chapters = [dict(id='group-id', title='Experience', claims=[
+                dict(kind='open', requirements=[proof_id], sources=[]),
+            ])]
+            snapshot = dict(criteria=criteria, chapters=chapters, generation_gaps=[gap, gap, evidence_gap])
+            store.save_revision(project, 0, snapshot, 'inputs', b'Saved draft', notice={'episode': 'review'})
+            with store.write() as db:
+                db.execute("UPDATE review_outbox SET state='failed', attempts=1, diagnostic=?",
+                           ('Check SMTP authentication and address settings.',))
+            store.enqueue([project])
+            _, _, token = store.claim()
+            store.finish(project, token, 'partial', 'Some preparation units need a retry.')
+
+            with patch.dict(os.environ, {'MESAKUMO_AUTOMATION_DIR': directory}), patch(
+                'mesakumo.ui.automation.start_worker'
+            ), patch('mesakumo.automation.prepare_inputs',
+                     return_value=SimpleNamespace(key='inputs', template_hash=None)
+            ):
+                app = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py'))
+                app.query_params = {'project': project, 'tab': 'review'}
+                app.run()
+                next(w for w in app.text_input if w.label == 'Approval reviewer').set_value('Consultant')
+                next(w for w in app.button if w.label == 'Approve current checksum').click().run()
+                next(w for w in app.button if w.label == 'Verify approved download').click().run()
+
+            self.assertFalse(app.exception)
+            self.assertFalse(app.warning)
+            self.assertFalse(app.error)
+            sections = {item.label: item for item in app.expander}
+            for label in ('Open issues (5)', 'Review email could not be sent', 'Preparation needs a retry'):
+                self.assertFalse(sections[label].proto.expanded)
+            issues = sections['Open issues (5)'].dataframe[0].value
+            self.assertEqual(issues['Requirement or source'].tolist(), [
+                'File the signed form', 'Provide a project reference', 'Chapter approach', 'Provide a project reference',
+            ])
+            self.assertNotIn('Requirement ID', issues.columns)
+            self.assertEqual(issues['Occurrences'].tolist(), [1, 1, 2, 1])
+            coverage = sections['Requirement coverage'].dataframe[0].value
+            self.assertEqual(coverage['Requirement'].tolist(), ['File the signed form', 'Provide a project reference'])
+            self.assertEqual(coverage['Slide groups'].tolist(), ['', 'Experience'])
+            self.assertIn('Download approved PowerPoint', [item.label for item in app.get('download_button')])
+            self.assertEqual(store.project(project)['approval']['reviewer'], 'Consultant')
+
+    def test_only_selected_reading_gap_has_a_resolution_form(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Ausschreibung 1').mkdir()
+            store = AutomationStore(root / 'workspace.sqlite3')
+            project, = store.register(root)
+            gaps = [dict(file='First.pdf', detail='Page 1 unreadable.'),
+                    dict(file='Second.pdf', detail='Page 2 unreadable.')]
+            store.save_revision(project, 0, {'reading_gaps': gaps}, 'inputs')
+
+            with patch.dict(os.environ, {'MESAKUMO_AUTOMATION_DIR': directory}), patch(
+                'mesakumo.ui.automation.start_worker'
+            ):
+                app = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py'))
+                app.query_params = {'project': project, 'tab': 'requirements'}
+                app.run()
+                selector = next(w for w in app.selectbox if w.label == 'Reading gap to review')
+                self.assertIn('Second.pdf · Page 2 unreadable.', selector.options)
+                selector.set_value(fingerprint(gaps[1])).run()
+                notes = [w for w in app.text_input if w.label == 'Resolution and reviewer']
+                self.assertEqual(len(notes), 1)
+                notes[0].set_value('Page checked by Alex.')
+                next(w for w in app.button if w.label == 'Record resolution').click().run()
+                self.assertFalse(app.exception)
+            saved = store.project(project)['snapshot']['reading_gaps']
+            self.assertEqual(saved, [gaps[0], dict(gaps[1], resolution='Page checked by Alex.')])
+
+    def test_review_tables_follow_filters_and_current_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Ausschreibung 1').mkdir()
+            store = AutomationStore(root / 'workspace.sqlite3')
+            project, = store.register(root)
+            criteria = [
+                dict(criterion('Supply two references', 'T', response='proof', conditions=['Two projects']), id='R1'),
+                dict(criterion('Supply a training reference', 'T', response='proof'), id='R2', obligation='scored'),
+                dict(criterion('Explain the approach', 'T'), id='R3'),
+                dict(criterion('Upload the bid', 'T', scope='administrative'), id='R4'),
+            ]
+            current = dict(status='confirmed', citations=['E1'], reason='Two completed projects.')
+            stale = dict(status='confirmed', citations=['E2'], reason='From an old requirement.')
+            snapshot = dict(
+                criteria=criteria, sources={'T': dict(file='tender.txt', quote='Two projects', location='L1')},
+                evidence={'R1': current, 'R2': stale}, evidence_edits={'R2': stale},
+                evidence_sources={'E1': dict(filename='projects.pdf', location='Page 2', excerpt='Project details'),
+                                  'E2': dict(filename='stale.pdf', location='Page 4', excerpt='Old support')},
+            )
+            store.save_revision(project, 0, snapshot, 'inputs')
+
+            def open_tab(tab):
+                app = AppTest.from_file(str(ROOT / 'mesakumo/streamlit_app.py'))
+                app.query_params = {'project': project, 'tab': tab}
+                app.run()
+                self.assertFalse(app.exception)
+                return app
+
+            with patch.dict(os.environ, {'MESAKUMO_AUTOMATION_DIR': directory}), patch(
+                'mesakumo.ui.automation.start_worker'
+            ):
+                requirements = open_tab('requirements')
+                table = requirements.dataframe[1].value
+                self.assertEqual(table['Requirement ID'].tolist(), ['R1', 'R2', 'R3'])
+                self.assertEqual(table.iloc[0]['Exact conditions'], 'Two projects')
+                self.assertEqual(table.iloc[0]['Tender sources'], 'tender.txt · L1')
+                next(w for w in requirements.multiselect if w.label == 'Obligation filter').set_value(['scored']).run()
+                self.assertEqual(requirements.dataframe[1].value['Requirement ID'].tolist(), ['R2'])
+
+                evidence = open_tab('evidence')
+                table = evidence.dataframe[0].value
+                self.assertEqual(table['Requirement ID'].tolist(), ['R1', 'R2'])
+                self.assertEqual(table['Assessment'].tolist(), ['confirmed', 'awaiting assessment'])
+                self.assertEqual(table['Supporting sources'].tolist(), ['projects.pdf · Page 2', ''])
+                self.assertEqual(table['Reasoning'].tolist(), ['Two completed projects.', ''])
+
     def test_stale_approval_and_edit_forms_reject_second_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -58,18 +186,18 @@ class ReviewActions(unittest.TestCase):
 
 
 class IntakeAndCoverage(unittest.TestCase):
-    def test_mandatory_proposal_none_is_not_approvable(self):
-        from mesakumo.automation_proposal import blockers, coverage
+    def test_mandatory_proposal_with_no_response_is_flagged_for_review(self):
+        from mesakumo.automation_proposal import coverage, review_issues
         from mesakumo.automation_requirements import parse_grounded
 
-        for scope, obligation, blocked in [('proposal', 'mandatory', True), ('proposal', 'scored', True),
+        for scope, obligation, flagged in [('proposal', 'mandatory', True), ('proposal', 'scored', True),
                                             ('proposal', 'informational', False), ('administrative', 'mandatory', False)]:
             with self.subTest(scope=scope, obligation=obligation):
                 row = dict(criterion('Explain the approach', 'T', scope=scope, response='none'),
                            id='R', obligation=obligation)
-                self.assertEqual(bool(list(coverage([row], [], {}))[0]['blocker']), blocked)
+                self.assertEqual(bool(list(coverage([row], [], {}))[0]['needs_review']), flagged)
                 parsed = parse_grounded(dict(criteria=[row], facts=[]), {'T': {}})['criteria'][0]
-                self.assertEqual(bool(blockers(dict(criteria=[parsed], coverage=[]))), blocked)
+                self.assertEqual(bool(review_issues(dict(criteria=[parsed], coverage=[]))), flagged)
 
     def test_supporting_zip_does_not_register_offer_phase(self):
         from zipfile import ZipFile
@@ -140,7 +268,7 @@ class StageRecovery(unittest.TestCase):
         import json
 
         from mesakumo.automation import approve_current, run_once
-        from mesakumo.automation_proposal import blockers
+        from mesakumo.automation_proposal import review_issues
         from mesakumo.evidence import EvidenceSource
         from mesakumo.gemini import ProviderError
 
@@ -177,11 +305,13 @@ class StageRecovery(unittest.TestCase):
                 ids = request['criteria']
                 has_interviews = any('interviews' in row['text'] for row in ids.values())
                 self.calls.append(('draft', len(ids), has_interviews))
+                if has_interviews and self.broken:
+                    raise ProviderError('Fixture draft truncated.', truncated=True)
                 claims = []
                 for rid, row in ids.items():
                     if 'interviews' in row['text']:
                         claims.append(dict(text='Interview residents using open questions.', kind='proposal',
-                                           requirements=[rid], sources=['invalid'] if self.broken else []))
+                                           requirements=[rid], sources=[]))
                     else:
                         claims.append(dict(text='Workshop and railway references', kind='source fact',
                                            requirements=[rid], sources=row['evidence_ids'][:1]))
@@ -209,18 +339,37 @@ class StageRecovery(unittest.TestCase):
                 self.assertEqual(len(first['snapshot']['extraction_gaps']), 1)
                 self.assertEqual(len(first['snapshot']['generation_gaps']), 1)
                 self.assertEqual([call[1] for call in model.calls if call[0] == 'evidence'], [2, 1, 1])
-                self.assertTrue(blockers(first['snapshot']))
-                with self.assertRaisesRegex(ValueError, 'blockers'):
-                    approve_current(store, first, 'Consultant')
+                self.assertTrue(review_issues(first['snapshot']))
+                self.assertEqual(approve_current(store, first, 'Consultant')['checksum'], first['checksum'])
                 model = Model(False)
                 store.enqueue([key])
                 run_once(store, lambda: model)
                 self.assertEqual(store.projects()[0]['status'], 'ready')
                 self.assertEqual(model.calls, [('extract', 'bad.txt'), ('draft', 1, True)])
-                self.assertFalse(blockers(store.project(key)['snapshot']))
+                self.assertFalse(review_issues(store.project(key)['snapshot']))
 
 
 class EvidenceIntegrity(unittest.TestCase):
+    def test_shortlist_includes_focused_evidence_from_another_file(self):
+        from mesakumo.automation_evidence import shortlist
+        from mesakumo.domain import SourcePassage
+        from mesakumo.evidence import EvidenceReading, EvidenceSource
+        from mesakumo.evidence_matching import LexicalIndex
+
+        statement = 'Railway signalling control modernization safety system engineering audit'
+        primary = EvidenceReading(EvidenceSource('projects.txt', 'projects.txt', 'Previous project sources'),
+                                  'Read', passages=[
+            SourcePassage(f'P{i}', 'projects', f'Page {i}', f'{statement} 50126', '1') for i in range(10)
+        ])
+        focused = EvidenceReading(EvidenceSource('certificate.txt', 'certificate.txt', 'Previous project sources'),
+                                  'Read', passages=[SourcePassage('certificate', 'proof', 'Page 1', '50126 certified', '1')])
+        index = LexicalIndex([primary, focused])
+        self.assertNotIn('certificate', index.search(f'{statement} 50126', limit=8))
+        row = criterion(statement, 'T', response='proof', conditions=['50126'])
+        candidates = shortlist(index, row)
+        self.assertEqual(len(candidates), 8)
+        self.assertEqual(candidates['certificate']['filename'], 'certificate.txt')
+
     def test_only_profile_owner_can_claim_competencies(self):
         from mesakumo.automation_evidence import suggest_reviewer
         from mesakumo.domain import SourcePassage
@@ -239,7 +388,7 @@ class EvidenceIntegrity(unittest.TestCase):
         self.assertEqual(result['match']['citations'], ['robin'])
 
     def test_draft_retains_three_assessed_references_and_late_support(self):
-        from mesakumo.automation_proposal import check_claims, coverage, plan_context
+        from mesakumo.automation_proposal import coverage, plan_context, review_claims
 
         row = dict(criterion('Provide three references', 'T', response='proof'), id='R')
         ids = ['a', 'b', 'c']
@@ -250,9 +399,12 @@ class EvidenceIntegrity(unittest.TestCase):
         self.assertEqual(inputs['R']['evidence_ids'], ids)
         claims = [dict(kind='source fact', text=f'Qualification {sid}', requirements=['R'], sources=[sid])
                   for sid in ids]
-        check_claims(dict(claims=claims), inputs, quotes)
-        with self.assertRaisesRegex(ValueError, 'confirmed proof'):
-            check_claims(dict(claims=claims[:1]), inputs, quotes)
+        self.assertEqual(review_claims(dict(title='References', claims=claims), inputs, quotes, 'Portfolio')['claims'],
+                         claims)
+        partial = review_claims(dict(title='References', claims=claims[:1]), inputs, quotes, 'Portfolio')
+        self.assertEqual(partial['claims'], claims[:1])
+        gaps = list(coverage([row], [dict(id='G', claims=partial['claims'])], assessment))
+        self.assertIn('confirmed proof', gaps[0]['issue'])
         manual = dict(claims[0], kind='manual')
         gaps = list(coverage([row], [dict(id='G', claims=[manual])], assessment))
         self.assertIn('confirmed proof', gaps[0]['issue'])
@@ -354,17 +506,17 @@ class PrivateTemplateIntegration(unittest.TestCase):
         self.assertTrue(any('cover' in issue.lower() for issue in issues))
 
     def test_edited_commercial_fields_require_current_attestation(self):
-        from mesakumo.automation_proposal import blockers, confirm_fields
+        from mesakumo.automation_proposal import confirm_fields, review_issues
 
         group = dict(id='pricing', role='pricing', title='Pricing', context_key='draft', claims=[],
                      fields=[['Delivery', 'EUR 45,000']])
-        self.assertTrue(blockers({'chapters': [group]}))
+        self.assertTrue(review_issues({'chapters': [group]}))
         with self.assertRaises(ValueError):
             confirm_fields(group, 'Morgan', '')
         group['field_review'] = confirm_fields(group, 'Morgan', 'Finance decision PR-42')
-        self.assertFalse(blockers({'chapters': [group]}))
+        self.assertFalse(review_issues({'chapters': [group]}))
         group['fields'][0][1] = 'EUR 54,000'
-        self.assertTrue(blockers({'chapters': [group]}))
+        self.assertTrue(review_issues({'chapters': [group]}))
 
 
 class NotificationRouting(unittest.TestCase):
@@ -447,7 +599,7 @@ class DistributableEvaluation(unittest.TestCase):
                 parsed['id'] = 'R'
                 self.assertEqual(eligible(parsed), case['scope'] == 'proposal' and case['response'] == 'proof')
                 self.assertEqual(bool(list(chapter_units([parsed]))), case['scope'] == 'proposal')
-                self.assertTrue(list(coverage([parsed], [], {}))[0]['blocker'])
+                self.assertTrue(list(coverage([parsed], [], {}))[0]['needs_review'])
                 observations[case['case']] = dict(recalled=True, scope=parsed['scope'], response=parsed['response'],
                                                    claims_checked=0, unsupported_claims=0, correction_seconds=None)
         result = score(cases, observations)

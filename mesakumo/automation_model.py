@@ -16,7 +16,7 @@ def model_profile(model):
 
 
 class ModelCalls:
-    def __init__(self, store, model, project, wait, *, sleep=time.sleep):
+    def __init__(self, store, model, project, wait, *, sleep=time.sleep, check_active=None):
         self.store = store
         self.model = model
         if isinstance(model, RequestyModel):
@@ -24,6 +24,7 @@ class ModelCalls:
         self.project = project
         self.wait = wait
         self.sleep = sleep
+        self.check_active = check_active
         model_id = getattr(model, 'model', None) or type(model).__name__
         self.name = model_id
         scope = os.environ.get('MESAKUMO_QUOTA_PROJECT') or type(model).__name__
@@ -40,6 +41,8 @@ class ModelCalls:
         while True:
             now = time.time()
             with self.store.write() as db:
+                if self.check_active is not None:
+                    self.check_active(db)
                 daily = db.execute('SELECT count(*),min(called) FROM model_calls WHERE quota_bucket=? AND called>?',
                                    (self.bucket, now - 86400)).fetchone()
                 if self.rpd and daily[0] >= self.rpd:

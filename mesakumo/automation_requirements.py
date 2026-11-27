@@ -15,7 +15,7 @@ from .discovery import offer_archives, scan
 from .documents import LocalProcessor
 
 PARSER = 'local-3'
-EXTRACTION = 'criteria-4'
+EXTRACTION = 'criteria-6'
 CHAPTERS = ('context', 'approach', 'outcomes', 'participation', 'timeline', 'team', 'pricing', 'annexes')
 
 
@@ -128,18 +128,31 @@ def parse_grounded(result, sources):
 
 
 def extract_batch(call, batch, phase, language):
-    prompt = f"""Extract each checkable tender criterion and source-backed brief fact for phase {phase}.
-Write the short criterion statement in {language}; quote no invented sources. Keep each exact
-date, quantity, threshold, condition and exception separately in original wording in conditions.
-Distinguish proposal proof (past references or skills), proposed method, current actions
-(signatures, availability, tender-specific partner commitments), and administrative logistics.
-Portal use and submission mechanics are administrative. Rated criteria are scored.
-Use uncertain where scope, obligation or response need is unclear. Keep independent acceptance
-conditions and scored items separate. Use scope proposal when a scored narrative is required.
-Respect phase applicability. An explicit buyer amendment can supersede an earlier requirement
-only when it identifies the earlier provision. Preserve sources and potentially conflicting values.
-Facts may include client, scope, deadline, language, phase and deliverable. Report language only
-when the buyer specifies the required submission language, quoting the language name. Cite supplied keys.
+    prompt = f"""Extract the requirements checklist and a short Tender brief for phase {phase}.
+
+For the checklist, extract only independently checkable bidder obligations and scoring criteria
+that apply to this phase. Write one short action statement in {language} for each item. Combine
+repeated wording for the same obligation. Keep independently scored or checked items separate.
+Skip headings, background, and form labels that add no bidder action. Include required attachments
+and declarations even when a template is provided. Preserve exact dates, quantities, thresholds,
+conditions, and exceptions in their original wording in conditions.
+Use proposal scope for substantive proof and scored narratives. Route portal logistics and filing
+attachments to administrative scope. Mark rated criteria as scored and source-required items as
+mandatory. Distinguish proof of past experience or skills, a proposed method, and a current action
+such as signing or confirming availability. Use uncertain when classification is unclear. Preserve
+conflicting clauses and apply an amendment only if it identifies the provision it replaces. Cite
+the passage that supports each criterion.
+
+For the Tender brief facts, use short, single-line values. Include only:
+- client: the contracting authority's official name.
+- scope: the short procurement title or a phrase of up to 100 characters describing the work.
+- deadline: the submission deadline for this phase, with the time and time zone if specified.
+- language: the buyer's explicitly required submission language, using the stated language name.
+- deliverable: the main project output, only if it adds information beyond the scope.
+Omit absent facts, the phase label, background, secondary dates, and detailed submission instructions.
+Use one value per field unless sources give materially different values for the same fact in this phase.
+Use the strongest supplied citation for each fact, adding a second only if needed to support the value.
+Cite only supplied keys for all entries.
 Sources:
 {canonical(batch)}"""
     return parse_grounded(call(prompt, Extraction, max_tokens=8000), batch)
@@ -242,9 +255,9 @@ def apply_amendment_precedence(related, sources):
     return remaining
 
 
-def read_manifest(folder, phase, *, capture=True):
+def read_manifest(folder, phase, *, capture=True, check_active=None):
     archives = offer_archives(folder)
-    rows = scan(folder, phase, phase_archives=archives, capture=capture)
+    rows = scan(folder, phase, phase_archives=archives, capture=capture, check_active=check_active)
     if phase == 'offer':
         missing = archives - {row['path'] for row in rows}
         if not archives:
