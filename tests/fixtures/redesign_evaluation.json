@@ -1,0 +1,79 @@
+[
+  {
+    "case": "Transformationschallenge",
+    "source": "Leistungsbeschreibung, Eignungs- & Auswahlkriterien and historical bid slides 8–11",
+    "criterion": "Explain the workshop and the subsequent handoff between work phases.",
+    "scope": "proposal",
+    "response": "method",
+    "chapter": "approach",
+    "check": "Group method steps while preserving their separate constraints.",
+    "synthetic_source": "The tenderer shall describe a discovery workshop and how its results pass to the next work phase. Public project contact details are provided for questions.",
+    "obligation": "mandatory"
+  },
+  {
+    "case": "SAP Change Management",
+    "source": "Bewertungsmatrix Changemanagement and historical bid slides 9–22",
+    "criterion": "Address the evaluated change approach in the proposed workstreams.",
+    "scope": "proposal",
+    "response": "method",
+    "chapter": "approach",
+    "check": "A scored narrative remains a criterion even when historical proof is unnecessary.",
+    "synthetic_source": "The buyer scores the proposed change approach. The proposal must explain separate stakeholder, training and governance workstreams.",
+    "obligation": "scored"
+  },
+  {
+    "case": "Digitalisierungspaten",
+    "source": "Historical bid slides 3, 8 and 14–22 and accompanying annex references",
+    "criterion": "Collect signed bidder declarations for the submission.",
+    "scope": "administrative",
+    "response": "current_action",
+    "chapter": "annexes",
+    "check": "An earlier bid or certificate cannot confirm signatures for this tender.",
+    "synthetic_source": "The bidder must include signed declarations with this submission. Earlier certificates can be listed as additional information.",
+    "obligation": "mandatory"
+  },
+  {
+    "case": "Tender 2",
+    "source": "VDI_TZ_3 Leistungsbeschreibung, pages 4–7",
+    "criterion": "Describe how qualitative interviews inform the combined study outputs.",
+    "scope": "proposal",
+    "response": "method",
+    "chapter": "approach",
+    "check": "Method, deliverables and milestone conditions remain traceable to their work packages.",
+    "synthetic_source": "The proposal shall explain how qualitative interviews inform the combined study outputs. The originally published milestones still apply.",
+    "obligation": "mandatory"
+  },
+  {
+    "case": "Tender 3 participation",
+    "source": "Bewerbungsbedingungen im Teilnahmewettbewerb and Anlage Referenzen",
+    "criterion": "Supply requested participation references.",
+    "scope": "proposal",
+    "response": "proof",
+    "chapter": "annexes",
+    "check": "Distinguish the historical proof from the current submission action.",
+    "synthetic_source": "The participation application shall include prior experience references for comparable engagements.",
+    "obligation": "mandatory"
+  },
+  {
+    "case": "Tender 3 offer",
+    "source": "Unterlage für die Angebotsphase.zip, nine members in offer only",
+    "criterion": "Prepare the response using the offer phase package.",
+    "scope": "administrative",
+    "response": "current_action",
+    "chapter": "annexes",
+    "check": "The participation manifest must exclude offer archive members.",
+    "synthetic_source": "For the offer phase, bidders must use the separate offer package. Its nominal cover page only describes the procurement.",
+    "obligation": "mandatory"
+  },
+  {
+    "case": "Translated holdout",
+    "source": "Synthetic English equivalent",
+    "criterion": "Upload the bid through the procurement portal.",
+    "scope": "administrative",
+    "response": "current_action",
+    "chapter": "annexes",
+    "check": "Neither English nor German submission wording is routed to historical evidence.",
+    "synthetic_source": "The bidder must upload the bid through the procurement portal. The procedure identifier is provided on the cover.",
+    "obligation": "mandatory"
+  }
+]

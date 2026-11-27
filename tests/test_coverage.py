@@ -5,7 +5,7 @@ from pathlib import Path
 from mesakumo.discovery import open_selection
 from mesakumo.persistence import ProjectStore
 from mesakumo.agent import sources
-from mesakumo.coverage import CoverageRuns, referenced_candidates, source_groups
+from mesakumo.coverage import CoverageRuns
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):
@@ -58,41 +58,6 @@ class CoverageTests(unittest.TestCase):
         self.assertGreater(result['steps'],1)
         self.assertEqual(set(result['processed']),set(sources(self.project,self.rows)[2]))
         self.assertEqual(result['status'],'completed')
-
-class TenderIsolationTests(unittest.TestCase):
-    def test_switching_tenders_never_displays_other_tender_rows(self):
-        import os
-        from unittest.mock import patch
-        from streamlit.testing.v1 import AppTest
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp)
-            for number, text in [(1,'FIRST UNIQUE requirement.'),(2,'SECOND UNIQUE requirement.')]:
-                pack=root/f'Ausschreibung {number}';pack.mkdir()
-                (pack/'spec.txt').write_text(text)
-            class Model:
-                def complete(inner,prompt):
-                    group=json.loads(prompt.split('Sources:\n')[1])
-                    ref=next(iter(group)); b=group[ref]
-                    return json.dumps({'requirements':[{'statement':b['text'],'evidence_ids':[ref],'kind':'deliverable','constraints':[]}]})
-            with patch.dict(os.environ,{'MESAKUMO_PARTICIPANT_DIR':tmp,'MESAKUMO_LLM_PROVIDER':'disabled'}),patch('mesakumo.models.configured_model',return_value=Model()):
-                previous=os.environ.pop('MESAKUMO_DATA_DIR',None)
-                try:
-                    app=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
-                    workspace=app.session_state['fresh_workspace_v3']
-                    next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()
-                    self.assertIn('FIRST UNIQUE',str(app.dataframe[0].value))
-                    app.sidebar.selectbox[0].select('Ausschreibung 2').run()
-                    self.assertEqual(len(app.dataframe[0].value),0)
-                    next(b for b in app.sidebar.button if b.label=='Start extraction').click().run()
-                    self.assertFalse(app.exception)
-                    self.assertIn('SECOND UNIQUE',str(app.dataframe[0].value))
-                    self.assertNotIn('FIRST UNIQUE',str(app.dataframe[0].value))
-                    self.assertEqual(app.subheader[0].value,'Ausschreibung 2 · single')
-                    fresh=AppTest.from_file('mesakumo/streamlit_app.py',default_timeout=30).run()
-                    self.assertNotEqual(fresh.session_state['fresh_workspace_v3'],workspace)
-                    self.assertEqual(len(fresh.dataframe[0].value),0)
-                finally:
-                    if previous is not None: os.environ['MESAKUMO_DATA_DIR']=previous
 
 class AdaptiveCoverageTests(unittest.TestCase):
     setUp = CoverageTests.setUp

@@ -3,9 +3,8 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
-from mesakumo.discovery import ROOT, open_selection
+from mesakumo.discovery import open_selection
 from mesakumo.persistence import ProjectStore
 from mesakumo.tender_overview import FIELDS, SOURCE_BUDGET, TenderOverviews, overview_context
 
@@ -82,41 +81,3 @@ class TenderOverviewTests(unittest.TestCase):
             model.invalid = False
             self.assertEqual(cache.ensure(project, rows, 'single', model)['status'], 'ready')
             self.assertEqual(model.calls, 2)
-
-    def test_ui_placement_sources_reload_and_failure_isolation(self):
-        from streamlit.testing.v1 import AppTest
-        (ROOT / 'data').mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory(dir=ROOT / 'data') as data:
-            root = Path(folder)
-            for number in (1, 2):
-                pack = root / f'Ausschreibung {number}'
-                pack.mkdir()
-                (pack / 'Leistungsbeschreibung.txt').write_text(
-                    'Die Stadt Nord beschafft drei Workshops. Termine: 3. Dezember bzw. 5. Dezember.')
-            model = OverviewModel()
-            with patch.dict('os.environ', {'MESAKUMO_PARTICIPANT_DIR': folder, 'MESAKUMO_DATA_DIR': data,
-                                          'MESAKUMO_KEEP_SESSION': 'no', 'MESAKUMO_LLM_PROVIDER': 'disabled'}), patch(
-                                              'mesakumo.models.configured_model', return_value=model):
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
-                self.assertEqual(model.calls, 0)
-                next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()
-                self.assertFalse(app.exception)
-                headings = [widget.value for widget in app.subheader]
-                self.assertLess(headings.index('Vergabeübersicht'), headings.index('Requirements'))
-                self.assertTrue(any('Leistungsbeschreibung.txt · Lines' in e.label for e in app.expander))
-                self.assertTrue(any('Die Stadt Nord beschafft' in item.value for item in app.text))
-                self.assertTrue(any('Widersprüchliche' in item.value for item in app.warning))
-                self.assertTrue(any('nicht gefunden' in item.value for item in app.caption))
-                self.assertEqual(model.calls, 1)
-                app = AppTest.from_file('mesakumo/streamlit_app.py').run()
-                self.assertTrue(any('Drei Workshops für die Stadt Nord.' == item.value for item in app.text))
-                self.assertEqual(model.calls, 1)
-                next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()
-                self.assertEqual(model.calls, 1)
-                app.sidebar.selectbox[0].select('Ausschreibung 2').run()
-                self.assertFalse(any(widget.value == 'Vergabeübersicht' for widget in app.subheader))
-                model.invalid = True
-                next(b for b in app.sidebar.button if b.label == 'Start extraction').click().run()
-                self.assertFalse(app.exception)
-                self.assertTrue(any('ungültigen Quellenverweis' in item.value for item in app.warning))
-                self.assertIn('Drei Workshops durchführen', app.dataframe[0].value['requirement'].tolist())

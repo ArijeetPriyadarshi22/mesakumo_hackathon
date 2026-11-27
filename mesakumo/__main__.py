@@ -1,13 +1,31 @@
+"""Launch the local workspace on the loopback interface."""
+import argparse
 import os
+import sys
 from pathlib import Path
-from .persistence import ProjectStore
-from .ui.server import serve
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Launch TenderWorkbench on this workstation.')
+    parser.add_argument('--port', type=int, default=os.environ.get('MESAKUMO_PORT', '8501'))
+    parser.add_argument('--worker', action='store_true', help='Process saved jobs without launching a browser.')
+    args = parser.parse_args()
+    app = Path(__file__).resolve().parent
+    if args.worker:
+        from .automation import work_loop
+        from .automation_store import AutomationStore, workspace_path
+
+        try:
+            work_loop(AutomationStore(workspace_path()), args.port)
+        except KeyboardInterrupt:
+            return
+        return
+    from streamlit.web.cli import main as streamlit
+
+    sys.argv = ['streamlit', 'run', str(app / 'streamlit_app.py'),
+                '--server.address', '127.0.0.1', '--server.port', str(args.port)]
+    streamlit()
+
 
 if __name__ == '__main__':
-    root = Path(__file__).resolve().parent.parent
-    data = Path(os.environ.get('MESAKUMO_DATA_DIR', 'data'))
-    if not data.is_absolute():
-        data = root / data
-    if not data.resolve().is_relative_to(root):
-        raise SystemExit('MESAKUMO_DATA_DIR must remain inside the project root.')
-    serve(ProjectStore(data / 'workspace.sqlite3'), int(os.environ.get('MESAKUMO_PORT', '8501')))
+    main()

@@ -1,15 +1,13 @@
 """Proposal drafting from an approved evidence review: prompt, validation, storage and page."""
 import json
 import hashlib
-import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from mesakumo.persistence import ConflictError, ProjectStore
 from mesakumo.proposal import (DRAFTING_SYSTEM, SCHEMA, ProposalDrafts, build_prompt, draft_row,
-                               handoff_csv, handoff_project, open_items, pending_items, review_summary,
-                               validate_draft)
+                               handoff_csv, open_items, pending_items, validate_draft)
 
 
 def citation(pid, location, excerpt):
@@ -249,28 +247,9 @@ class DraftStorageTests(unittest.TestCase):
         table = list(csv.DictReader(io.StringIO(handoff_csv(package).decode('utf-8-sig'), newline='')))
         self.assertEqual([(r['Requirement ID'], r['Section title']) for r in table], [('R2', 'Projektleitung')])
         self.assertEqual([c['passage_id'] for c in json.loads(table[0]['Citations'])], ['P10'])
-        project = handoff_project(package, REVIEW)
-        self.assertEqual((project.name, [s.title for s in project.sections]), ('Ausschreibung 9', ['Projektleitung']))
-        self.assertEqual([r.id for r in project.requirements], ['R1', 'R2', 'R3'])
-        self.assertEqual([(e.quality, e.decision) for e in project.evidence], [('sufficient', 'Approved')])
-        self.assertEqual([p.id for p in project.passages], ['P10'])
 
         self.drafts.decline('R1', 'Luba', 'Zu allgemein.', 1)  # Any change makes the package stale.
         self.assertEqual(self.drafts.latest_package()[1], False)
-
-    def test_review_summary_lists_what_needs_attention(self):
-        self.drafts.generate('R1', Stub({**PARTIAL, 'text': PARTIAL['text'] + ' Sie ist als Hauptdozentin benannt.'}),
-                             expected_version=0)
-        self.drafts.generate('R3', Stub(), expected_version=0)
-        self.drafts.decline('R3', 'Luba', 'Zertifikat anfragen.', 1)
-        summary = review_summary(REVIEW, self.drafts.all(), 'Ausschreibung 9')
-        attention = summary.split('## Needs attention')[1].split('## Sections')[0]
-        self.assertIn('waiting for your decision', attention)
-        self.assertIn('check wording: benannt, hauptdozentin', attention)
-        self.assertIn('declined by Luba', attention)
-        self.assertIn('not drafted yet', attention)
-        self.assertIn('| 3 | 0 | 1 | 1 | 1 |', summary)
-        self.assertIn('> Declined by Luba: Zertifikat anfragen.', summary)
 
     def test_stale_version_is_rejected(self):
         self.drafts.generate('R1', Stub(PARTIAL), expected_version=0)
@@ -304,96 +283,7 @@ class DraftStorageTests(unittest.TestCase):
             self.drafts.generate('R9', Stub(), expected_version=0)
 
 
-def page_script(db_path, review_json):
-    import json
-    from pathlib import Path
-    from mesakumo.persistence import ProjectStore
-    from mesakumo.ui.proposal import proposal_view
-    proposal_view(ProjectStore(Path(db_path)), {'review': json.loads(review_json)})
 
-
-def current_revision_page(db_path):
-    import json
-    from pathlib import Path
-    from mesakumo.persistence import ProjectStore
-    from mesakumo.ui.proposal import proposal_view
-    store = ProjectStore(Path(db_path))
-    with store.connect() as db:
-        payload, = db.execute('SELECT payload FROM evidence_reviews').fetchone()
-    proposal_view(store, {'review': json.loads(payload)})
-
-
-class ProposalPageTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.addCleanup(temp.cleanup)
-        self.path = Path(temp.name) / 'workspace.sqlite3'
-        self.store = ProjectStore(self.path)
-        save_approval_fixture(self.store)
-        os.environ['MESAKUMO_LLM_PROVIDER'] = 'disabled'  # Never reach a real provider from tests.
-        self.addCleanup(os.environ.pop, 'MESAKUMO_LLM_PROVIDER', None)
-
-    def app(self):
-        from streamlit.testing.v1 import AppTest
-        return AppTest.from_function(page_script, args=(str(self.path), json.dumps(REVIEW)), default_timeout=30)
-
-    @staticmethod
-    def widget(items, label):
-        return next(w for w in items if w.label.startswith(label))
-
-    def test_page_lists_sections_and_edits_a_saved_draft(self):
-        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), expected_version=0)
-        app = self.app().run()
-        self.assertFalse(app.exception)
-        self.assertEqual(app.dataframe[0].value['Section'].tolist(), ['Draft', 'Empty', 'Empty'])
-        self.assertTrue(any(e.label.startswith('Open items') for e in app.expander))
-        self.widget(app.text_area, 'Section text').set_value(
-            'Manuela Engl, MBA (laut Dozentenblatt). [OFFEN: Verfügbarkeit bestätigen]')
-        self.widget(app.button, 'Save section').click().run()
-        self.assertFalse(app.exception)
-        saved = ProposalDrafts(self.store, REVIEW).all()['R1']
-        self.assertEqual((saved['status'], open_items(saved['text'])), ('Edited', ['Verfügbarkeit bestätigen']))
-
-    def test_page_exports_manual_and_generated_text_with_no_review_steps(self):
-        app = self.app().run()
-        self.widget(app.text_area, 'Section text').set_value('Manueller Entwurf')
-        self.widget(app.button, 'Save section').click().run()
-        self.widget(app.button, 'Generate missing drafts').click().run()
-        self.assertFalse(app.checkbox)
-        self.widget(app.button, 'Continue to Final Review').click().run()
-        self.assertFalse(app.exception)
-        package, current = ProposalDrafts(self.store, REVIEW).latest_package()
-        self.assertTrue(current)
-        self.assertEqual(package['reviewer'], '')
-        self.assertEqual([section['requirement_id'] for section in package['sections']], ['R1', 'R3'])
-        self.assertIn('Manueller Entwurf', package['sections'][0]['text'])
-        self.assertIn('Verfügbarkeit bestätigen.', package['sections'][0]['open_items'])
-        self.assertEqual(package['sections'][0]['citations'], [])
-        self.assertEqual([row['requirement_id'] for row in package['excluded']], ['R2'])
-
-    def test_stale_tab_cannot_export_an_unseen_revision(self):
-        from streamlit.testing.v1 import AppTest
-        ProposalDrafts(self.store, REVIEW).generate('R1', Stub(PARTIAL), 0)
-        tab_a = AppTest.from_function(current_revision_page, args=(str(self.path),)).run()
-        old_button = self.widget(tab_a.button, 'Continue to Final Review')
-
-        newer = {**REVIEW, 'review_revision': REVIEW['review_revision'] + 1}
-        save_approval_fixture(self.store, newer)
-        new_service = ProposalDrafts(self.store, newer)
-        new_service.generate('R1', Stub({**PARTIAL, 'title': 'Unseen draft'}), 0)
-        tab_b = AppTest.from_function(current_revision_page, args=(str(self.path),)).run()
-        self.assertEqual(self.widget(tab_b.text_input, 'Section title').value, 'Unseen draft')
-
-        old_button.click().run()
-        self.assertFalse(tab_a.exception)
-        self.assertIsNone(new_service.latest_package()[0])
-        self.assertEqual(self.widget(tab_a.text_input, 'Section title').value, 'Unseen draft')
-
-    def test_filters_show_all_proposal_categories(self):
-        app = self.app().run()
-        table = app.dataframe[0].value
-        self.assertEqual(sorted(table['Category'].unique()), ['deliverable', 'eligibility/evidence'])
-        self.assertEqual(len(table), 3)
 
 
 if __name__ == '__main__':

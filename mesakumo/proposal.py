@@ -21,7 +21,6 @@ from .persistence import ConflictError
 
 FIT_GERMAN = {'Strong match': 'vollständig belegt', 'Partial match': 'teilweise belegt', 'No match': 'nicht belegt'}
 CITED_FITS = ('Strong match', 'Partial match')
-PROSE_KINDS = ('deliverable', 'eligibility/evidence')  # Categories that normally need proposal prose.
 MAX_PROMPT_BYTES = 120_000
 MAX_EXCERPT_CHARS = 6_000  # Per tender excerpt; evidence excerpts are sent in full.
 OFFEN = re.compile(r'\[OFFEN:\s*([^\[\]]+?)\s*\]')
@@ -114,17 +113,6 @@ def _draft_markers(previous, text):
     previous = previous or {}
     return list(dict.fromkeys([*previous.get('draft_open_items', []),
                                *open_items(previous.get('text')), *open_items(text)]))
-
-
-# Wording that often carries an earlier offer's staffing or a commitment over into a draft.
-CHECK_WORDING = re.compile(r'\b(benannt\w*|benenn\w*|hauptdozent\w*|vertretung der hauptdozent\w*|erbringt|'
-                           r'erbracht\w*|zertifiziert\w*|zertifizierung\w*|garantier\w*|sichergestellt)\b',
-                           re.IGNORECASE)
-
-
-def check_wording(text):
-    """Phrases a reviewer should read twice; a reading aid, not a complete check."""
-    return sorted({m.group(0).lower() for m in CHECK_WORDING.finditer(text or '')})
 
 
 def _clip(text, limit):
@@ -522,7 +510,6 @@ def _without_decision(draft):
             ('approved_by', 'approved_at', 'approved_open_items', 'declined_by', 'decline_comment')}
 
 
-QUALITY = {'Strong match': 'sufficient', 'Partial match': 'partial', 'No match': 'none', '': 'none'}
 HANDOFF_COLUMNS = ['Requirement ID', 'Requirement', 'Category', 'Evidence fit', 'Section title', 'Section text',
                    'Open items', 'Evidence gap', 'Citations', 'Tender sources', 'Approved by']
 
@@ -538,79 +525,3 @@ def handoff_csv(package):
                          '\n'.join(f"{t['filename']} · {t['location']}" for t in s['tender_sources']),
                          s['approved_by']])
     return stream.getvalue().encode('utf-8-sig')
-
-
-def handoff_project(package, review):
-    """Convert the saved proposal package to the domain Project format."""
-    from dataclasses import fields
-    from .domain import EvidenceMatch, Project, ProposalSection, Requirement, SourcePassage
-    known = {f.name for f in fields(Requirement)}
-    requirements = [Requirement(**{'source_ids': [], **{k: v for k, v in row['requirement'].items() if k in known}})
-                    for row in review['rows']]
-    passages = {c['passage_id']: SourcePassage(c['passage_id'], c['document_id'], c['location'], c['excerpt'],
-                                               c['document_version'])
-                for s in package['sections'] for c in s['citations']}
-    return Project(
-        id=package['project_id'], name=package['project_name'] or package['project_id'], synthetic=False,
-        scope=f"Phase {review.get('phase', '')} · evidence revision {package['evidence_revision']}",
-        requirements=requirements, passages=list(passages.values()),
-        evidence=[EvidenceMatch('E-' + s['requirement_id'], s['requirement_id'],
-                                [c['passage_id'] for c in s['citations']], QUALITY[s['fit']], s['evidence_gap'],
-                                decision='Approved') for s in package['sections']],
-        sections=[ProposalSection('S-' + s['requirement_id'], s['title'], s['text'], [s['requirement_id']],
-                                  [c['passage_id'] for c in s['citations']], reviewed=bool(s['approved_by']))
-                  for s in package['sections']])
-
-
-def review_summary(review, drafts, project_name=''):
-    """A Markdown summary for the person who approves the draft: what needs attention, then every section."""
-    rows = review['rows']
-    status = lambda rid: drafts.get(rid, {}).get('status', 'Not drafted')
-    counts = {}
-    for row in rows:
-        counts[status(row['requirement']['id'])] = counts.get(status(row['requirement']['id']), 0) + 1
-    attention = []
-    for n, row in enumerate(rows, 1):
-        rid, draft = row['requirement']['id'], drafts.get(row['requirement']['id'])
-        reasons = []
-        if draft is None:
-            reasons.append('not drafted yet')
-        else:
-            if draft['status'] == 'Declined':
-                reasons.append(f"declined by {draft['declined_by']} — waiting for a redraft")
-            if draft['status'] in ('Draft', 'Edited'):
-                reasons.append('waiting for your decision')
-            if draft.get('citations_need_review'):
-                reasons.append('citations need reconfirmation')
-            if check_wording(draft['text']):
-                reasons.append('check wording: ' + ', '.join(check_wording(draft['text'])))
-            if row['fit'] != 'Strong match':
-                reasons.append(f"evidence: {row['fit'] or 'Assessment open'}")
-        items = pending_items(row, draft)
-        if items:
-            reasons.append('open: ' + ' / '.join(items.values()))
-        if reasons and (status(rid) != 'Approved' or items or (draft and check_wording(draft['text']))):
-            attention.append(f"- **{n}. {_clip(row['requirement']['text'], 110)}** — {'; '.join(reasons)}")
-    lines = [f"# Draft review summary{' — ' + project_name if project_name else ''}", '',
-             f"Evidence review revision {review['review_revision']} · created "
-             f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", '',
-             '| Requirements | Approved | Waiting for decision | Declined | Not drafted |', '|---|---|---|---|---|',
-             f"| {len(rows)} | {counts.get('Approved', 0)} | {counts.get('Draft', 0) + counts.get('Edited', 0)} | "
-             f"{counts.get('Declined', 0)} | {counts.get('Not drafted', 0)} |", '',
-             'Approve a section only if every statement is backed by its cited evidence. `[OFFEN: …]` marks a point '
-             'someone must confirm or supply; approved sections keep these markers in the PPTX.', '',
-             '## Needs attention', ''] + (attention or ['Nothing — every drafted section is approved.']) + ['', '## Sections', '']
-    for n, row in enumerate(rows, 1):
-        rid, draft = row['requirement']['id'], drafts.get(row['requirement']['id'])
-        lines += [f"### {n}. {draft['title'] if draft else _clip(row['requirement']['text'], 110)}", '',
-                  f"*Requirement:* {row['requirement']['text']}  ",
-                  f"*Evidence:* {row['fit'] or 'Assessment open'} · *Status:* {status(rid)}"
-                  + (f" by {draft['approved_by']}" if draft and draft['status'] == 'Approved' else ''), '']
-        if draft:
-            cited = [review['corpus'][pid] for pid in draft.get('citation_ids', [])]
-            citation_label = 'Citations to reconfirm' if draft.get('citations_need_review') else 'Cited'
-            lines += [f"*{citation_label}:* {'; '.join(c['filename'] + ' · ' + c['location'] for c in cited) or '—'}",
-                      '', section_export_text(row, draft), '']
-            if draft['status'] == 'Declined':
-                lines += [f"> Declined by {draft['declined_by']}: {draft['decline_comment']}", '']
-    return '\n'.join(lines) + '\n'

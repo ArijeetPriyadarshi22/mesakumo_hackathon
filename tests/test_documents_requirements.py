@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 from unittest.mock import patch
 from mesakumo.domain import Project
-from mesakumo.documents import intake, LocalProcessor
+from mesakumo.documents import intake
 from mesakumo.persistence import ProjectStore
 from mesakumo.requirements import (extract_candidates, save_requirement, review_checklist,
                                    validate_candidates, tender_passages, delete_requirement)

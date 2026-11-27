@@ -5,8 +5,6 @@ from mesakumo import workflow
 from mesakumo.persistence import ProjectStore, ConflictError
 from mesakumo.sample import sample_project
 from mesakumo.models import DisabledModel, ModelUnavailable
-from mesakumo.documents import UnconfiguredProcessor
-from mesakumo.export import UnconfiguredExporter
 
 class FoundationTests(unittest.TestCase):
     def test_restart_retains_edits_and_reviews(self):
@@ -70,13 +68,9 @@ class FoundationTests(unittest.TestCase):
                 store.save(stale, 1)
             self.assertEqual(store.load(project.id).sections[0].text, 'First edit')
 
-    def test_adapters_fail_honestly(self):
+    def test_disabled_model_rejects_generation(self):
         with self.assertRaises(ModelUnavailable):
             DisabledModel().complete('Prompt')
-        with self.assertRaises(NotImplementedError):
-            UnconfiguredProcessor().extract(Path('absent.pdf'), 'D1')
-        with self.assertRaises(NotImplementedError):
-            UnconfiguredExporter().render(sample_project())
 
 if __name__ == '__main__':
     unittest.main()
